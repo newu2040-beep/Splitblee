@@ -1,0 +1,6 @@
+{
+  "name": "SplitBlee",
+  "description": "Split, share, and enjoy shared expenses with friends in real time.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

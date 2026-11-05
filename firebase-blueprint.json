@@ -1,0 +1,152 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile and app preferences.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the user." },
+        "displayName": { "type": "string", "description": "User display name." },
+        "email": { "type": "string", "description": "User email address." },
+        "photoUrl": { "type": "string", "description": "Profile photo URL." },
+        "age": { "type": "integer", "description": "Optional user age." },
+        "gender": { "type": "string", "enum": ["Male", "Female"], "description": "User gender (Male/Female)." },
+        "address": { "type": "string", "description": "Optional shared place or address." },
+        "preferredLanguage": { "type": "string", "enum": ["en", "ne", "hi"], "description": "Preferred UI language code." },
+        "defaultCurrency": { "type": "string", "description": "ISO 4217 currency code." },
+        "theme": { "type": "string", "enum": ["Ocean Blue", "Mint", "Lavender", "Sand", "Graphite", "Rose"], "description": "Color theme name." },
+        "themeMode": { "type": "string", "enum": ["Light", "Dark", "System"], "description": "Light, Dark, or System mode." },
+        "notificationsEnabled": { "type": "boolean", "description": "Whether notifications are enabled." },
+        "locationSharingEnabled": { "type": "boolean", "description": "Explicit opt-in location sharing toggle." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp when created." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp when updated." }
+      },
+      "required": ["userId", "displayName", "email", "preferredLanguage", "defaultCurrency", "theme", "themeMode", "notificationsEnabled", "locationSharingEnabled", "createdAt", "updatedAt"]
+    },
+    "Group": {
+      "title": "Group",
+      "description": "Expense sharing group with settlement currency and members.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner UID." },
+        "name": { "type": "string", "description": "Group name." },
+        "settlementCurrency": { "type": "string", "description": "ISO 4217 settlement currency code." },
+        "memberNames": { "type": "array", "description": "Bounded list of member names." },
+        "memberCount": { "type": "integer", "description": "Total number of group members." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp when created." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp when updated." }
+      },
+      "required": ["userId", "name", "settlementCurrency", "memberNames", "memberCount", "createdAt", "updatedAt"]
+    },
+    "Friend": {
+      "title": "Friend",
+      "description": "Friend profile, privacy-aware location pin, and balance summary.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner UID." },
+        "name": { "type": "string", "description": "Friend display name." },
+        "email": { "type": "string", "description": "Friend email or identifier." },
+        "age": { "type": "integer", "description": "Friend age." },
+        "gender": { "type": "string", "enum": ["Male", "Female"], "description": "Friend gender (Male/Female)." },
+        "address": { "type": "string", "description": "Shared place or neighborhood." },
+        "status": { "type": "string", "enum": ["Accepted", "Pending", "Blocked"], "description": "Connection status." },
+        "isOnline": { "type": "boolean", "description": "Online presence status." },
+        "locationSharing": { "type": "boolean", "description": "Whether friend explicitly shares location." },
+        "latitude": { "type": "number", "description": "Shared pin latitude." },
+        "longitude": { "type": "number", "description": "Shared pin longitude." },
+        "owesYouMinor": { "type": "integer", "description": "Amount owed to user in minor units." },
+        "youOweMinor": { "type": "integer", "description": "Amount user owes friend in minor units." },
+        "splitsCount": { "type": "integer", "description": "Number of shared splits." },
+        "currency": { "type": "string", "description": "ISO 4217 currency code." },
+        "avatarIndex": { "type": "integer", "description": "Avatar visual preset index." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp when created." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp when updated." }
+      },
+      "required": ["userId", "name", "gender", "status", "isOnline", "locationSharing", "owesYouMinor", "youOweMinor", "splitsCount", "currency", "createdAt", "updatedAt"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "Shared bill split with itemized breakdown, taxes, discounts, and participant shares in minor units.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Creator UID." },
+        "groupId": { "type": "string", "description": "Associated group ID or empty for one-off." },
+        "groupName": { "type": "string", "description": "Associated group name." },
+        "title": { "type": "string", "description": "Expense title." },
+        "category": { "type": "string", "description": "Expense category." },
+        "notes": { "type": "string", "description": "Optional expense note." },
+        "place": { "type": "string", "description": "Location or venue name." },
+        "expenseDate": { "type": "string", "description": "Formatted date/time string." },
+        "monthKey": { "type": "string", "description": "YYYY-MM month key for monthly tracking." },
+        "currency": { "type": "string", "description": "ISO 4217 currency code." },
+        "subtotalMinor": { "type": "integer", "description": "Subtotal in minor units." },
+        "taxPercent": { "type": "integer", "description": "Tax percentage." },
+        "taxMinor": { "type": "integer", "description": "Tax amount in minor units." },
+        "serviceChargeMinor": { "type": "integer", "description": "Service charge in minor units." },
+        "tipMinor": { "type": "integer", "description": "Tip in minor units." },
+        "extraAmountMinor": { "type": "integer", "description": "Extra amount in minor units." },
+        "discountMinor": { "type": "integer", "description": "Discount in minor units." },
+        "totalMinor": { "type": "integer", "description": "Final reconciled total in minor units." },
+        "splitMethod": { "type": "string", "enum": ["EQUAL", "PERCENTAGE", "EXACT", "ITEMIZED"], "description": "Split calculation method." },
+        "status": { "type": "string", "enum": ["PAID", "PARTIALLY_PAID", "UNPAID", "OVERPAID", "CANCELLED"], "description": "Current payment status." },
+        "paidMinor": { "type": "integer", "description": "Total recorded payments in minor units." },
+        "owedToYouMinor": { "type": "integer", "description": "Amount owed to creator on this split in minor units." },
+        "youOweMinor": { "type": "integer", "description": "Amount creator owes others on this split in minor units." },
+        "participantCount": { "type": "integer", "description": "Number of participants." },
+        "participantNames": { "type": "array", "description": "Bounded list of participant names." },
+        "participantSharesSummary": { "type": "string", "description": "Encoded participant shares and paid status breakdown." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp when created." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp when updated." }
+      },
+      "required": [
+        "userId", "title", "category", "place", "expenseDate", "monthKey", "currency",
+        "subtotalMinor", "taxPercent", "taxMinor", "serviceChargeMinor", "tipMinor",
+        "extraAmountMinor", "discountMinor", "totalMinor", "splitMethod", "status",
+        "paidMinor", "owedToYouMinor", "youOweMinor", "participantCount",
+        "participantNames", "participantSharesSummary", "createdAt", "updatedAt"
+      ]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Immutable payment ledger entry recording payments, reversals, or adjustments.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Recorder UID." },
+        "expenseId": { "type": "string", "description": "Target expense ID." },
+        "expenseTitle": { "type": "string", "description": "Target expense title." },
+        "groupId": { "type": "string", "description": "Group ID if applicable." },
+        "payerName": { "type": "string", "description": "Name of person who paid." },
+        "payeeName": { "type": "string", "description": "Name of recipient." },
+        "amountMinor": { "type": "integer", "description": "Payment amount in minor units." },
+        "currency": { "type": "string", "description": "ISO 4217 currency code." },
+        "method": { "type": "string", "description": "Payment method (Cash, Bank Transfer, UPI, eSewa, Card, Manual)." },
+        "reference": { "type": "string", "description": "Optional payment reference or note." },
+        "entryType": { "type": "string", "enum": ["PAYMENT", "REVERSAL", "ADJUSTMENT"], "description": "Ledger entry type." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp when recorded." }
+      },
+      "required": ["userId", "expenseId", "expenseTitle", "payerName", "payeeName", "amountMinor", "currency", "method", "entryType", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Per-user profile and settings isolated by UID."
+    },
+    "/groups/{groupId}": {
+      "schema": { "$ref": "#/entities/Group" },
+      "description": "Expense groups owned by the authenticated user."
+    },
+    "/friends/{friendId}": {
+      "schema": { "$ref": "#/entities/Friend" },
+      "description": "Friend connections and privacy-aware location pins."
+    },
+    "/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/Expense" },
+      "description": "Splits and bills with full breakdown and participant shares."
+    },
+    "/payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/Payment" },
+      "description": "Append-only immutable payment ledger entries."
+    }
+  }
+}

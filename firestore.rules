@@ -1,0 +1,290 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1: Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidCurrency(code) {
+      return code is string && code.size() == 3 &&
+        code in ['NPR', 'INR', 'PKR', 'USD', 'EUR', 'GBP', 'AED', 'SAR', 'QAR', 'KWD', 'AUD', 'CAD', 'JPY', 'BDT', 'LKR'];
+    }
+
+    // 1. UserProfile Validation
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+        data.email is string && data.email.size() <= 200 &&
+        (!('photoUrl' in data) || data.photoUrl == null || (data.photoUrl is string && data.photoUrl.size() <= 500)) &&
+        (!('age' in data) || data.age == null || (data.age is int && data.age >= 13 && data.age <= 120)) &&
+        (!('gender' in data) || data.gender == null || (data.gender is string && data.gender in ['Male', 'Female'])) &&
+        (!('address' in data) || data.address == null || (data.address is string && data.address.size() <= 250)) &&
+        data.preferredLanguage is string && data.preferredLanguage in ['en', 'ne', 'hi'] &&
+        isValidCurrency(data.defaultCurrency) &&
+        data.theme is string && data.theme in ['Ocean Blue', 'Mint', 'Lavender', 'Sand', 'Graphite', 'Rose'] &&
+        data.themeMode is string && data.themeMode in ['Light', 'Dark', 'System'] &&
+        data.notificationsEnabled is bool &&
+        data.locationSharingEnabled is bool &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+        isValidId(userId) &&
+        request.auth.uid == userId &&
+        incoming().keys().hasAll([
+          'userId', 'displayName', 'email', 'preferredLanguage', 'defaultCurrency',
+          'theme', 'themeMode', 'notificationsEnabled', 'locationSharingEnabled',
+          'createdAt', 'updatedAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'userId', 'displayName', 'email', 'photoUrl', 'age', 'gender', 'address',
+          'preferredLanguage', 'defaultCurrency', 'theme', 'themeMode',
+          'notificationsEnabled', 'locationSharingEnabled', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidUserProfile(incoming());
+
+      allow update: if isSignedIn() &&
+        isValidId(userId) &&
+        request.auth.uid == userId &&
+        isValidUserProfile(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'email', 'photoUrl', 'age', 'gender', 'address',
+          'preferredLanguage', 'defaultCurrency', 'theme', 'themeMode',
+          'notificationsEnabled', 'locationSharingEnabled', 'updatedAt'
+        ]);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    // 2. Group Validation
+    function isValidGroup(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        isValidCurrency(data.settlementCurrency) &&
+        data.memberNames is list && data.memberNames.size() <= 20 &&
+        (data.memberNames.size() == 0 || (data.memberNames[0] is string && data.memberNames[0].size() <= 100)) &&
+        data.memberCount is int && data.memberCount >= 1 && data.memberCount <= 50 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /groups/{groupId} {
+      allow get: if isSignedIn() && isValidId(groupId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+        isValidId(groupId) &&
+        incoming().keys().hasAll([
+          'userId', 'name', 'settlementCurrency', 'memberNames', 'memberCount', 'createdAt', 'updatedAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'userId', 'name', 'settlementCurrency', 'memberNames', 'memberCount', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidGroup(incoming());
+
+      allow update: if isSignedIn() &&
+        isValidId(groupId) &&
+        existing().userId == request.auth.uid &&
+        isValidGroup(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'settlementCurrency', 'memberNames', 'memberCount', 'updatedAt'
+        ]);
+
+      allow delete: if isSignedIn() && isValidId(groupId) && existing().userId == request.auth.uid;
+    }
+
+    // 3. Friend Validation
+    function isValidFriend(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        (!('email' in data) || data.email == null || (data.email is string && data.email.size() <= 200)) &&
+        (!('age' in data) || data.age == null || (data.age is int && data.age >= 13 && data.age <= 120)) &&
+        data.gender is string && data.gender in ['Male', 'Female'] &&
+        (!('address' in data) || data.address == null || (data.address is string && data.address.size() <= 250)) &&
+        data.status is string && data.status in ['Accepted', 'Pending', 'Blocked'] &&
+        data.isOnline is bool &&
+        data.locationSharing is bool &&
+        (!('latitude' in data) || data.latitude == null || (data.latitude is number && data.latitude >= -90 && data.latitude <= 90)) &&
+        (!('longitude' in data) || data.longitude == null || (data.longitude is number && data.longitude >= -180 && data.longitude <= 180)) &&
+        data.owesYouMinor is int && data.owesYouMinor >= 0 &&
+        data.youOweMinor is int && data.youOweMinor >= 0 &&
+        data.splitsCount is int && data.splitsCount >= 0 &&
+        isValidCurrency(data.currency) &&
+        (!('avatarIndex' in data) || data.avatarIndex == null || (data.avatarIndex is int && data.avatarIndex >= 0 && data.avatarIndex <= 20)) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /friends/{friendId} {
+      allow get: if isSignedIn() && isValidId(friendId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+        isValidId(friendId) &&
+        incoming().keys().hasAll([
+          'userId', 'name', 'gender', 'status', 'isOnline', 'locationSharing',
+          'owesYouMinor', 'youOweMinor', 'splitsCount', 'currency', 'createdAt', 'updatedAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'userId', 'name', 'email', 'age', 'gender', 'address', 'status',
+          'isOnline', 'locationSharing', 'latitude', 'longitude',
+          'owesYouMinor', 'youOweMinor', 'splitsCount', 'currency', 'avatarIndex',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidFriend(incoming());
+
+      allow update: if isSignedIn() &&
+        isValidId(friendId) &&
+        existing().userId == request.auth.uid &&
+        isValidFriend(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'email', 'age', 'gender', 'address', 'status',
+          'isOnline', 'locationSharing', 'latitude', 'longitude',
+          'owesYouMinor', 'youOweMinor', 'splitsCount', 'currency', 'avatarIndex',
+          'updatedAt'
+        ]);
+
+      allow delete: if isSignedIn() && isValidId(friendId) && existing().userId == request.auth.uid;
+    }
+
+    // 4. Expense Validation
+    function isValidExpense(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+        (!('groupId' in data) || data.groupId == null || (data.groupId is string && data.groupId.size() <= 128)) &&
+        (!('groupName' in data) || data.groupName == null || (data.groupName is string && data.groupName.size() <= 100)) &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 60 &&
+        (!('notes' in data) || data.notes == null || (data.notes is string && data.notes.size() <= 500)) &&
+        data.place is string && data.place.size() <= 150 &&
+        data.expenseDate is string && data.expenseDate.size() >= 1 && data.expenseDate.size() <= 60 &&
+        data.monthKey is string && data.monthKey.size() >= 4 && data.monthKey.size() <= 20 &&
+        isValidCurrency(data.currency) &&
+        data.subtotalMinor is int && data.subtotalMinor >= 0 &&
+        data.taxPercent is int && data.taxPercent >= 0 && data.taxPercent <= 100 &&
+        data.taxMinor is int && data.taxMinor >= 0 &&
+        data.serviceChargeMinor is int && data.serviceChargeMinor >= 0 &&
+        data.tipMinor is int && data.tipMinor >= 0 &&
+        data.extraAmountMinor is int && data.extraAmountMinor >= 0 &&
+        data.discountMinor is int && data.discountMinor >= 0 &&
+        data.totalMinor is int && data.totalMinor > 0 &&
+        data.splitMethod is string && data.splitMethod in ['EQUAL', 'PERCENTAGE', 'EXACT', 'ITEMIZED'] &&
+        data.status is string && data.status in ['PAID', 'PARTIALLY_PAID', 'UNPAID', 'OVERPAID', 'CANCELLED'] &&
+        data.paidMinor is int && data.paidMinor >= 0 &&
+        data.owedToYouMinor is int && data.owedToYouMinor >= 0 &&
+        data.youOweMinor is int && data.youOweMinor >= 0 &&
+        data.participantCount is int && data.participantCount >= 1 && data.participantCount <= 20 &&
+        data.participantNames is list && data.participantNames.size() <= 20 &&
+        (data.participantNames.size() == 0 || (data.participantNames[0] is string && data.participantNames[0].size() <= 100)) &&
+        data.participantSharesSummary is string && data.participantSharesSummary.size() <= 2000 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /expenses/{expenseId} {
+      allow get: if isSignedIn() && isValidId(expenseId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+        isValidId(expenseId) &&
+        incoming().keys().hasAll([
+          'userId', 'title', 'category', 'place', 'expenseDate', 'monthKey', 'currency',
+          'subtotalMinor', 'taxPercent', 'taxMinor', 'serviceChargeMinor', 'tipMinor',
+          'extraAmountMinor', 'discountMinor', 'totalMinor', 'splitMethod', 'status',
+          'paidMinor', 'owedToYouMinor', 'youOweMinor', 'participantCount',
+          'participantNames', 'participantSharesSummary', 'createdAt', 'updatedAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'userId', 'groupId', 'groupName', 'title', 'category', 'notes', 'place',
+          'expenseDate', 'monthKey', 'currency', 'subtotalMinor', 'taxPercent',
+          'taxMinor', 'serviceChargeMinor', 'tipMinor', 'extraAmountMinor',
+          'discountMinor', 'totalMinor', 'splitMethod', 'status', 'paidMinor',
+          'owedToYouMinor', 'youOweMinor', 'participantCount', 'participantNames',
+          'participantSharesSummary', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidExpense(incoming());
+
+      allow update: if isSignedIn() &&
+        isValidId(expenseId) &&
+        existing().userId == request.auth.uid &&
+        isValidExpense(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        existing().status != 'CANCELLED' &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'groupId', 'groupName', 'title', 'category', 'notes', 'place',
+          'expenseDate', 'monthKey', 'currency', 'subtotalMinor', 'taxPercent',
+          'taxMinor', 'serviceChargeMinor', 'tipMinor', 'extraAmountMinor',
+          'discountMinor', 'totalMinor', 'splitMethod', 'status', 'paidMinor',
+          'owedToYouMinor', 'youOweMinor', 'participantCount', 'participantNames',
+          'participantSharesSummary', 'updatedAt'
+        ]);
+
+      allow delete: if isSignedIn() && isValidId(expenseId) && existing().userId == request.auth.uid;
+    }
+
+    // 5. Payment Ledger Validation (Append-Only Immutable Ledger)
+    function isValidPayment(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+        data.expenseId is string && data.expenseId.size() >= 1 && data.expenseId.size() <= 128 &&
+        data.expenseTitle is string && data.expenseTitle.size() >= 1 && data.expenseTitle.size() <= 120 &&
+        (!('groupId' in data) || data.groupId == null || (data.groupId is string && data.groupId.size() <= 128)) &&
+        data.payerName is string && data.payerName.size() >= 1 && data.payerName.size() <= 100 &&
+        data.payeeName is string && data.payeeName.size() >= 1 && data.payeeName.size() <= 100 &&
+        data.amountMinor is int && data.amountMinor > 0 &&
+        isValidCurrency(data.currency) &&
+        data.method is string && data.method.size() >= 1 && data.method.size() <= 60 &&
+        (!('reference' in data) || data.reference == null || (data.reference is string && data.reference.size() <= 200)) &&
+        data.entryType is string && data.entryType in ['PAYMENT', 'REVERSAL', 'ADJUSTMENT'] &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    match /payments/{paymentId} {
+      allow get: if isSignedIn() && isValidId(paymentId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+        isValidId(paymentId) &&
+        incoming().keys().hasAll([
+          'userId', 'expenseId', 'expenseTitle', 'payerName', 'payeeName',
+          'amountMinor', 'currency', 'method', 'entryType', 'createdAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'userId', 'expenseId', 'expenseTitle', 'groupId', 'payerName', 'payeeName',
+          'amountMinor', 'currency', 'method', 'reference', 'entryType', 'createdAt'
+        ]) &&
+        isValidPayment(incoming());
+
+      // Immutable ledger entries: updates and deletes are strictly forbidden
+      allow update, delete: if false;
+    }
+  }
+}
