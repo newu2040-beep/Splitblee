@@ -39,8 +39,13 @@ service cloud.firestore {
         (!('address' in data) || data.address == null || (data.address is string && data.address.size() <= 250)) &&
         data.preferredLanguage is string && data.preferredLanguage in ['en', 'ne', 'hi'] &&
         isValidCurrency(data.defaultCurrency) &&
-        data.theme is string && data.theme in ['Ocean Blue', 'Mint', 'Lavender', 'Sand', 'Graphite', 'Rose'] &&
+        data.theme is string && data.theme in [
+          'Ocean Blue', 'Pastel Sky', 'Pastel Mint', 'Pastel Lavender',
+          'Pastel Peach', 'Pastel Rose', 'Pastel Lemon', 'Pastel Lilac',
+          'Mint', 'Lavender', 'Sand', 'Graphite', 'Rose'
+        ] &&
         data.themeMode is string && data.themeMode in ['Light', 'Dark', 'System'] &&
+        (!('uiScaleMode' in data) || data.uiScaleMode == null || (data.uiScaleMode is string && data.uiScaleMode in ['Auto', 'Compact', 'Standard', 'Expanded'])) &&
         data.notificationsEnabled is bool &&
         data.locationSharingEnabled is bool &&
         data.createdAt is timestamp && data.createdAt <= request.time &&
@@ -61,7 +66,7 @@ service cloud.firestore {
         ]) &&
         incoming().keys().hasOnly([
           'userId', 'displayName', 'email', 'photoUrl', 'age', 'gender', 'address',
-          'preferredLanguage', 'defaultCurrency', 'theme', 'themeMode',
+          'preferredLanguage', 'defaultCurrency', 'theme', 'themeMode', 'uiScaleMode',
           'notificationsEnabled', 'locationSharingEnabled', 'createdAt', 'updatedAt'
         ]) &&
         isValidUserProfile(incoming());
@@ -74,7 +79,7 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         incoming().diff(existing()).affectedKeys().hasOnly([
           'displayName', 'email', 'photoUrl', 'age', 'gender', 'address',
-          'preferredLanguage', 'defaultCurrency', 'theme', 'themeMode',
+          'preferredLanguage', 'defaultCurrency', 'theme', 'themeMode', 'uiScaleMode',
           'notificationsEnabled', 'locationSharingEnabled', 'updatedAt'
         ]);
 
@@ -185,6 +190,7 @@ service cloud.firestore {
         data.category is string && data.category.size() >= 1 && data.category.size() <= 60 &&
         (!('notes' in data) || data.notes == null || (data.notes is string && data.notes.size() <= 500)) &&
         data.place is string && data.place.size() <= 150 &&
+        (!('receiptUri' in data) || data.receiptUri == null || (data.receiptUri is string && data.receiptUri.size() <= 500)) &&
         data.expenseDate is string && data.expenseDate.size() >= 1 && data.expenseDate.size() <= 60 &&
         data.monthKey is string && data.monthKey.size() >= 4 && data.monthKey.size() <= 20 &&
         isValidCurrency(data.currency) &&
@@ -223,7 +229,7 @@ service cloud.firestore {
           'participantNames', 'participantSharesSummary', 'createdAt', 'updatedAt'
         ]) &&
         incoming().keys().hasOnly([
-          'userId', 'groupId', 'groupName', 'title', 'category', 'notes', 'place',
+          'userId', 'groupId', 'groupName', 'title', 'category', 'notes', 'place', 'receiptUri',
           'expenseDate', 'monthKey', 'currency', 'subtotalMinor', 'taxPercent',
           'taxMinor', 'serviceChargeMinor', 'tipMinor', 'extraAmountMinor',
           'discountMinor', 'totalMinor', 'splitMethod', 'status', 'paidMinor',
@@ -240,7 +246,7 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         existing().status != 'CANCELLED' &&
         incoming().diff(existing()).affectedKeys().hasOnly([
-          'groupId', 'groupName', 'title', 'category', 'notes', 'place',
+          'groupId', 'groupName', 'title', 'category', 'notes', 'place', 'receiptUri',
           'expenseDate', 'monthKey', 'currency', 'subtotalMinor', 'taxPercent',
           'taxMinor', 'serviceChargeMinor', 'tipMinor', 'extraAmountMinor',
           'discountMinor', 'totalMinor', 'splitMethod', 'status', 'paidMinor',

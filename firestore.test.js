@@ -59,11 +59,20 @@ test("User profile: owner can create and read own profile, non-owner denied (PII
       email: "rahul.shah@gmail.com",
       preferredLanguage: "en",
       defaultCurrency: "USD",
-      theme: "Ocean Blue",
+      theme: "Pastel Sky",
       themeMode: "Light",
+      uiScaleMode: "Compact",
       notificationsEnabled: true,
       locationSharingEnabled: false,
       createdAt: now,
+      updatedAt: now,
+    })
+  );
+
+  await assertSucceeds(
+    aliceDb.collection("users").doc(ALICE_UID).update({
+      theme: "Pastel Lavender",
+      uiScaleMode: "Standard",
       updatedAt: now,
     })
   );

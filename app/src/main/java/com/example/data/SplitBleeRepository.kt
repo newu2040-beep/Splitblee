@@ -94,6 +94,7 @@ class SplitBleeRepository(private val db: FirebaseFirestore) {
                 "defaultCurrency" to "USD",
                 "theme" to "Ocean Blue",
                 "themeMode" to "Light",
+                "uiScaleMode" to "Auto",
                 "notificationsEnabled" to true,
                 "locationSharingEnabled" to false,
                 "createdAt" to FieldValue.serverTimestamp(),
@@ -123,18 +124,22 @@ class SplitBleeRepository(private val db: FirebaseFirestore) {
         defaultCurrency: String,
         theme: String,
         themeMode: String,
+        uiScaleMode: String = "Auto",
+        photoUrl: String? = null,
         notificationsEnabled: Boolean,
         locationSharingEnabled: Boolean
     ): Result<Unit> = runCatching {
         val uid = requireUserId()
         val docRef = db.collection("users").document(uid)
         try {
+            val safeScale = if (uiScaleMode in listOf("Auto", "Compact", "Standard", "Expanded")) uiScaleMode else "Auto"
             val updates = mutableMapOf<String, Any>(
                 "displayName" to displayName.trim().ifEmpty { "SplitBlee User" }.take(100),
                 "preferredLanguage" to preferredLanguage,
                 "defaultCurrency" to defaultCurrency,
                 "theme" to theme,
                 "themeMode" to themeMode,
+                "uiScaleMode" to safeScale,
                 "notificationsEnabled" to notificationsEnabled,
                 "locationSharingEnabled" to locationSharingEnabled,
                 "updatedAt" to FieldValue.serverTimestamp()
@@ -148,7 +153,20 @@ class SplitBleeRepository(private val db: FirebaseFirestore) {
             if (!address.isNullOrBlank()) {
                 updates["address"] = address.trim().take(250)
             }
-            docRef.update(updates).await()
+            if (!photoUrl.isNullOrBlank()) {
+                updates["photoUrl"] = photoUrl.trim().take(500)
+            }
+            val snap = docRef.get().await()
+            if (snap.exists()) {
+                docRef.update(updates).await()
+            } else {
+                val createPayload = updates.toMutableMap().apply {
+                    put("userId", uid)
+                    put("email", (auth.currentUser?.email ?: "user@splitblee.app").take(200))
+                    put("createdAt", FieldValue.serverTimestamp())
+                }
+                docRef.set(createPayload).await()
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -229,6 +247,7 @@ class SplitBleeRepository(private val db: FirebaseFirestore) {
         splitMethod: String,
         participantNames: List<String>,
         customSharesMinor: List<Long>? = null,
+        receiptUri: String? = null,
         initialPaidByAll: Boolean = false
     ): Result<String> = runCatching {
         val uid = requireUserId()
@@ -254,7 +273,7 @@ class SplitBleeRepository(private val db: FirebaseFirestore) {
 
         val shareDetails = safeNames.mapIndexed { idx, name ->
             val assigned = assignedList[idx]
-            val isPaid = initialPaidByAll || idx == 0 // Creator (index 0) paid the bill upfront
+            val isPaid = initialPaidByAll || idx == 0
             ParticipantShareDetail(
                 name = name,
                 assignedMinor = assigned,
@@ -301,6 +320,7 @@ class SplitBleeRepository(private val db: FirebaseFirestore) {
         if (!notes.isNullOrBlank()) payload["notes"] = notes.trim().take(500)
         if (!groupId.isNullOrBlank()) payload["groupId"] = groupId.trim().take(128)
         if (!groupName.isNullOrBlank()) payload["groupName"] = groupName.trim().take(100)
+        if (!receiptUri.isNullOrBlank()) payload["receiptUri"] = receiptUri.trim().take(500)
 
         try {
             docRef.set(payload).await()
@@ -317,7 +337,8 @@ class SplitBleeRepository(private val db: FirebaseFirestore) {
         expense: ExpenseItem,
         newTitle: String,
         newPlace: String,
-        newNotes: String?
+        newNotes: String?,
+        newReceiptUri: String? = expense.receiptUri
     ): Result<Unit> = runCatching {
         requireUserId()
         val docRef = db.collection("expenses").document(expense.id)
@@ -328,6 +349,9 @@ class SplitBleeRepository(private val db: FirebaseFirestore) {
         )
         if (!newNotes.isNullOrBlank()) {
             updates["notes"] = newNotes.trim().take(500)
+        }
+        if (!newReceiptUri.isNullOrBlank()) {
+            updates["receiptUri"] = newReceiptUri.trim().take(500)
         }
         try {
             docRef.update(updates).await()
@@ -391,7 +415,7 @@ class SplitBleeRepository(private val db: FirebaseFirestore) {
         val newTotalPaid = updatedShares.sumOf { it.paidMinor }
         val newOwedToYou = updatedShares.drop(1).sumOf { it.remainingMinor }
         val newExpenseStatus = when {
-            entryType == "REVERSAL" && newTotalPaid <= updatedShares.firstOrNull()?.assignedMinor ?: 0L -> "UNPAID"
+            entryType == "REVERSAL" && newTotalPaid <= (updatedShares.firstOrNull()?.assignedMinor ?: 0L) -> "UNPAID"
             newOwedToYou == 0L && newTotalPaid >= expense.totalMinor -> "PAID"
             else -> SplitCalculator.deriveExpenseStatus(expense.totalMinor, newTotalPaid)
         }
@@ -515,19 +539,53 @@ class SplitBleeRepository(private val db: FirebaseFirestore) {
         }
     }
 
-    suspend fun toggleFriendLocationSharing(friend: FriendProfile, enabled: Boolean): Result<Unit> = runCatching {
+    suspend fun toggleFriendLocationSharing(
+        friend: FriendProfile,
+        enabled: Boolean,
+        liveLat: Double? = null,
+        liveLng: Double? = null,
+        liveAddress: String? = null
+    ): Result<Unit> = runCatching {
         requireUserId()
         val docRef = db.collection("friends").document(friend.id)
         val updates = mutableMapOf<String, Any>(
             "locationSharing" to enabled,
             "updatedAt" to FieldValue.serverTimestamp()
         )
-        if (enabled && (friend.latitude == null || friend.longitude == null)) {
-            updates["latitude"] = 27.7152
-            updates["longitude"] = 85.3123
+        if (enabled && liveLat != null && liveLng != null) {
+            updates["latitude"] = liveLat.coerceIn(-90.0, 90.0)
+            updates["longitude"] = liveLng.coerceIn(-180.0, 180.0)
+        }
+        if (enabled && !liveAddress.isNullOrBlank()) {
+            updates["address"] = liveAddress.trim().take(250)
         }
         try {
             docRef.update(updates).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    suspend fun updateFriendBalances(
+        friend: FriendProfile,
+        owesYouMinor: Long,
+        youOweMinor: Long,
+        splitsCount: Long
+    ): Result<Unit> = runCatching {
+        requireUserId()
+        val docRef = db.collection("friends").document(friend.id)
+        try {
+            docRef.update(
+                mapOf(
+                    "owesYouMinor" to owesYouMinor.coerceAtLeast(0L),
+                    "youOweMinor" to youOweMinor.coerceAtLeast(0L),
+                    "splitsCount" to splitsCount.coerceAtLeast(0L),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -592,7 +650,7 @@ class SplitBleeRepository(private val db: FirebaseFirestore) {
             .take(20)
         val payload = mapOf(
             "userId" to uid,
-            "name" to name.trim().ifEmpty { "Weekend Group" }.take(100),
+            "name" to name.trim().ifEmpty { "Shared Group" }.take(100),
             "settlementCurrency" to settlementCurrency,
             "memberNames" to safeMembers,
             "memberCount" to safeMembers.size.toLong(),

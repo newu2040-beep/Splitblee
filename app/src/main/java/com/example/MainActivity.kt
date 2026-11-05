@@ -46,12 +46,12 @@ import com.example.ui.screens.NewSplitScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.SplitDetailsScreen
 import com.example.ui.screens.signOutSplitBlee
+import com.example.ui.theme.SplitBleePalettes
 import com.example.ui.theme.SplitBleeTheme
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
-import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -80,7 +80,7 @@ fun SplitBleeRootApp() {
     val user = currentUser
     if (user == null) {
         // Screen 1: Login (Unauthenticated Gate — no Firestore ViewModels or listeners created)
-        SplitBleeTheme(themeName = "Ocean Blue", themeMode = "Light") {
+        SplitBleeTheme(themeName = "Ocean Blue", themeMode = "Light", uiScaleMode = "Auto") {
             LoginScreen(
                 strings = AppLocalization.forLanguage("en"),
                 onAuthSuccess = {
@@ -114,6 +114,7 @@ fun SplitBleeRootApp() {
             viewModel = viewModel,
             fallbackName = user.displayName ?: "Rahul Shah",
             fallbackEmail = user.email ?: "rahul.shah@gmail.com",
+            fallbackPhotoUrl = user.photoUrl?.toString(),
             onSignedOut = {
                 currentUser = null
             }
@@ -126,6 +127,7 @@ private fun AuthenticatedSplitBleeApp(
     viewModel: SplitBleeViewModel,
     fallbackName: String,
     fallbackEmail: String,
+    fallbackPhotoUrl: String?,
     onSignedOut: () -> Unit
 ) {
     val context = LocalContext.current
@@ -140,14 +142,22 @@ private fun AuthenticatedSplitBleeApp(
     val paymentsState by viewModel.paymentsState.collectAsStateWithLifecycle()
     val statusBanner by viewModel.statusBanner.collectAsStateWithLifecycle()
 
+    // Instant 0ms local state overrides synced to Firestore
+    val localThemeOverride by viewModel.localThemeOverride.collectAsStateWithLifecycle()
+    val localThemeModeOverride by viewModel.localThemeModeOverride.collectAsStateWithLifecycle()
+    val localUiScaleOverride by viewModel.localUiScaleOverride.collectAsStateWithLifecycle()
+    val localPhotoUriOverride by viewModel.localPhotoUriOverride.collectAsStateWithLifecycle()
+
     val userProfile = (userProfileState as? UiState.Success)?.data
     val expenses = (expensesState as? UiState.Success)?.data ?: emptyList()
     val friends = (friendsState as? UiState.Success)?.data ?: emptyList()
     val groups = (groupsState as? UiState.Success)?.data ?: emptyList()
     val payments = (paymentsState as? UiState.Success)?.data ?: emptyList()
 
-    val themeName = userProfile?.theme ?: "Ocean Blue"
-    val themeMode = userProfile?.themeMode ?: "Light"
+    val activeThemeName = localThemeOverride ?: userProfile?.theme ?: "Ocean Blue"
+    val activeThemeMode = localThemeModeOverride ?: userProfile?.themeMode ?: "Light"
+    val activeUiScaleMode = localUiScaleOverride ?: userProfile?.uiScaleMode ?: "Auto"
+    val activePhotoUri = localPhotoUriOverride ?: userProfile?.photoUrl ?: fallbackPhotoUrl
     val langCode = userProfile?.preferredLanguage ?: "en"
     val defaultCurrency = userProfile?.defaultCurrency ?: "USD"
     val strings = remember(langCode) { AppLocalization.forLanguage(langCode) }
@@ -168,7 +178,11 @@ private fun AuthenticatedSplitBleeApp(
 
     val showBottomBar = currentScreen in listOf("dashboard", "map", "settings", "groups", "history")
 
-    SplitBleeTheme(themeName = themeName, themeMode = themeMode) {
+    SplitBleeTheme(
+        themeName = activeThemeName,
+        themeMode = activeThemeMode,
+        uiScaleMode = activeUiScaleMode
+    ) {
         Scaffold(
             contentWindowInsets = WindowInsets.safeDrawing,
             snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -196,6 +210,7 @@ private fun AuthenticatedSplitBleeApp(
                             DashboardScreen(
                                 userProfile = userProfile,
                                 fallbackName = fallbackName,
+                                photoUri = activePhotoUri,
                                 expensesState = expensesState,
                                 strings = strings,
                                 onOpenNewSplit = { currentScreen = "new_split" },
@@ -207,8 +222,31 @@ private fun AuthenticatedSplitBleeApp(
                                     selectedExpenseId = expenseId
                                     currentScreen = "split_details"
                                 },
-                                onSeedStarterData = {
-                                    seedReferenceMockupData(viewModel, defaultCurrency)
+                                onToggleCompactMode = {
+                                    val nextScale = when (activeUiScaleMode) {
+                                        "Compact" -> "Standard"
+                                        "Standard" -> "Auto"
+                                        else -> "Compact"
+                                    }
+                                    viewModel.updateProfileAndPreferences(
+                                        current = userProfile,
+                                        theme = activeThemeName,
+                                        themeMode = activeThemeMode,
+                                        uiScaleMode = nextScale,
+                                        photoUrl = activePhotoUri
+                                    )
+                                },
+                                onCyclePastelTheme = {
+                                    val allThemeNames = SplitBleePalettes.all.map { it.name }
+                                    val currIdx = allThemeNames.indexOf(activeThemeName).coerceAtLeast(0)
+                                    val nextTheme = allThemeNames[(currIdx + 1) % allThemeNames.size]
+                                    viewModel.updateProfileAndPreferences(
+                                        current = userProfile,
+                                        theme = nextTheme,
+                                        themeMode = activeThemeMode,
+                                        uiScaleMode = activeUiScaleMode,
+                                        photoUrl = activePhotoUri
+                                    )
                                 }
                             )
                         }
@@ -218,17 +256,25 @@ private fun AuthenticatedSplitBleeApp(
                                 userProfile = userProfile,
                                 friendsState = friendsState,
                                 onBack = { currentScreen = "dashboard" },
-                                onAddFriend = { name, email, age, gender, address, locShare, curr, avatarIdx ->
-                                    viewModel.addFriend(name, email, age, gender, address, locShare, curr, avatarIdx)
+                                onAddFriend = { name, email, age, gender, address, locShare, lat, lng, curr, avatarIdx ->
+                                    viewModel.addFriend(
+                                        name = name,
+                                        email = email,
+                                        age = age,
+                                        gender = gender,
+                                        address = address,
+                                        locationSharing = locShare,
+                                        latitude = lat,
+                                        longitude = lng,
+                                        currency = curr,
+                                        avatarIndex = avatarIdx
+                                    )
                                 },
-                                onToggleFriendLocation = { friend, enabled ->
-                                    viewModel.toggleFriendLocation(friend, enabled)
+                                onToggleFriendLocation = { friend, enabled, lat, lng, addr ->
+                                    viewModel.toggleFriendLocation(friend, enabled, lat, lng, addr)
                                 },
                                 onToggleFriendBlocked = { friend ->
                                     viewModel.toggleFriendBlocked(friend)
-                                },
-                                onSeedStarterFriends = {
-                                    seedReferenceFriends(viewModel, defaultCurrency)
                                 }
                             )
                         }
@@ -241,8 +287,14 @@ private fun AuthenticatedSplitBleeApp(
                                     expense = activeExpense,
                                     strings = strings,
                                     onBack = { currentScreen = "dashboard" },
-                                    onUpdateExpenseInfo = { newTitle, newPlace, newNotes ->
-                                        viewModel.updateExpenseInfo(activeExpense, newTitle, newPlace, newNotes)
+                                    onUpdateExpenseInfo = { newTitle, newPlace, newNotes, newReceiptUri ->
+                                        viewModel.updateExpenseInfo(
+                                            expense = activeExpense,
+                                            newTitle = newTitle,
+                                            newPlace = newPlace,
+                                            newNotes = newNotes,
+                                            newReceiptUri = newReceiptUri
+                                        )
                                     },
                                     onRecordPayment = { payer, payee, amtMinor, method, ref, entryType ->
                                         viewModel.recordPayment(
@@ -254,6 +306,9 @@ private fun AuthenticatedSplitBleeApp(
                                             reference = ref,
                                             entryType = entryType
                                         )
+                                    },
+                                    onNotifyStatus = { msg ->
+                                        viewModel.showMessage(msg)
                                     }
                                 )
                             } else {
@@ -266,11 +321,15 @@ private fun AuthenticatedSplitBleeApp(
                                 userProfile = userProfile,
                                 fallbackName = fallbackName,
                                 fallbackEmail = fallbackEmail,
+                                activeTheme = activeThemeName,
+                                activeThemeMode = activeThemeMode,
+                                activeUiScaleMode = activeUiScaleMode,
+                                activePhotoUri = activePhotoUri,
                                 expenses = expenses,
                                 payments = payments,
                                 strings = strings,
                                 onBack = { currentScreen = "dashboard" },
-                                onUpdatePreferences = { name, age, gender, addr, lang, curr, thm, mode, notif, loc ->
+                                onUpdatePreferences = { name, age, gender, addr, lang, curr, thm, mode, scaleMode, photoUri, notif, loc ->
                                     viewModel.updateProfileAndPreferences(
                                         current = userProfile,
                                         displayName = name,
@@ -281,9 +340,14 @@ private fun AuthenticatedSplitBleeApp(
                                         defaultCurrency = curr,
                                         theme = thm,
                                         themeMode = mode,
+                                        uiScaleMode = scaleMode,
+                                        photoUrl = photoUri,
                                         notificationsEnabled = notif,
                                         locationSharingEnabled = loc
                                     )
+                                },
+                                onNotifyStatus = { msg ->
+                                    viewModel.showMessage(msg)
                                 },
                                 onSignOut = {
                                     signOutSplitBlee(
@@ -303,7 +367,7 @@ private fun AuthenticatedSplitBleeApp(
                                 friends = friends,
                                 userName = userProfile?.displayName ?: fallbackName,
                                 onBack = { currentScreen = "dashboard" },
-                                onSaveSplit = { title, cat, place, notes, grpId, grpName, curr, sub, tax, srv, tip, ext, disc, method, names, shares ->
+                                onSaveSplit = { title, cat, place, notes, grpId, grpName, curr, sub, tax, srv, tip, ext, disc, method, names, shares, receiptUri ->
                                     viewModel.createSplit(
                                         title = title,
                                         category = cat,
@@ -321,6 +385,7 @@ private fun AuthenticatedSplitBleeApp(
                                         splitMethod = method,
                                         participantNames = names,
                                         customSharesMinor = shares,
+                                        receiptUri = receiptUri,
                                         onCreated = { createdId ->
                                             selectedExpenseId = createdId
                                             currentScreen = "split_details"
@@ -360,97 +425,4 @@ private fun AuthenticatedSplitBleeApp(
             }
         }
     }
-}
-
-private fun seedReferenceFriends(viewModel: SplitBleeViewModel, currency: String) {
-    viewModel.addFriend(
-        name = "Rahul Shah",
-        email = "rahul.shah@gmail.com",
-        age = 25,
-        gender = "Male",
-        address = "Thamel, Kathmandu",
-        locationSharing = true,
-        currency = currency,
-        avatarIndex = 0
-    )
-    viewModel.addFriend(
-        name = "Priya Sharma",
-        email = "priya@splitblee.app",
-        age = 24,
-        gender = "Female",
-        address = "Lazimpat, Kathmandu",
-        locationSharing = true,
-        currency = currency,
-        avatarIndex = 1
-    )
-    viewModel.addFriend(
-        name = "Aarav Thapa",
-        email = "aarav@splitblee.app",
-        age = 26,
-        gender = "Male",
-        address = "Jhamsikhel, Lalitpur",
-        locationSharing = true,
-        currency = currency,
-        avatarIndex = 2
-    )
-}
-
-private fun seedReferenceMockupData(viewModel: SplitBleeViewModel, currency: String) {
-    seedReferenceFriends(viewModel, currency)
-    viewModel.createGroup(
-        name = "Thamel Dinner Crew",
-        currency = currency,
-        members = listOf("Rahul Shah", "Aarav Thapa", "Priya Sharma", "Sita Gurung")
-    )
-    viewModel.createSplit(
-        title = "Pizza Hut Dinner",
-        category = "Food & Drink",
-        place = "Pizza Hut, Thamel",
-        notes = "Wood-fired pizza dinner",
-        groupId = null,
-        groupName = "Thamel Dinner Crew",
-        currency = currency,
-        subtotalInput = "72.50",
-        taxPercent = 13,
-        serviceChargeInput = "0.00",
-        tipInput = "0.00",
-        extraInput = "0.00",
-        discountInput = "5.00",
-        splitMethod = "EQUAL",
-        participantNames = listOf("Rahul Shah", "Aarav Thapa", "Priya Sharma", "Sita Gurung")
-    )
-    viewModel.createSplit(
-        title = "Shopping Mall",
-        category = "Shopping",
-        place = "City Center Mall",
-        notes = "Weekend shopping",
-        groupId = null,
-        groupName = null,
-        currency = currency,
-        subtotalInput = "120.00",
-        taxPercent = 0,
-        serviceChargeInput = "0.00",
-        tipInput = "0.00",
-        extraInput = "0.00",
-        discountInput = "0.00",
-        splitMethod = "EQUAL",
-        participantNames = listOf("Rahul Shah", "Aarav Thapa", "Priya Sharma")
-    )
-    viewModel.createSplit(
-        title = "Coffee Break",
-        category = "Coffee",
-        place = "Himalayan Java",
-        notes = "Morning espresso",
-        groupId = null,
-        groupName = null,
-        currency = currency,
-        subtotalInput = "36.00",
-        taxPercent = 0,
-        serviceChargeInput = "0.00",
-        tipInput = "0.00",
-        extraInput = "0.00",
-        discountInput = "0.00",
-        splitMethod = "EQUAL",
-        participantNames = listOf("Rahul Shah", "Priya Sharma")
-    )
 }

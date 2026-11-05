@@ -33,12 +33,31 @@ class SplitBleeRepositoryRuleTest : FirestoreEmulatorTestBase() {
                 extraAmountMinor = 0L,
                 discountMinor = 500L,
                 splitMethod = "EQUAL",
-                participantNames = listOf("Rahul Shah", "Aarav", "Priya", "Sita")
+                participantNames = listOf("Rahul Shah", "Aarav", "Priya", "Sita"),
+                receiptUri = "content://media/picker/0/com.android.providers.media.photopicker/media/1001"
             )
         }
         assertTrue(createResult.isSuccess)
         val expenseId = createResult.getOrThrow()
         assertTrue(expenseId.isNotEmpty())
+
+        val profileRes = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repository.updateUserProfile(
+                displayName = "Rahul Shah",
+                age = 25,
+                gender = "Male",
+                address = "Thamel, Kathmandu",
+                preferredLanguage = "en",
+                defaultCurrency = "USD",
+                theme = "Pastel Mint",
+                themeMode = "Light",
+                uiScaleMode = "Compact",
+                photoUrl = "content://media/picker/0/com.android.providers.media.photopicker/media/1002",
+                notificationsEnabled = true,
+                locationSharingEnabled = true
+            )
+        }
+        assertTrue(profileRes.isSuccess)
 
         val emittedExpenses = withTimeout(FLOW_TIMEOUT_MS) {
             repository.observeExpenses(uid).first { list -> list.any { it.id == expenseId } }

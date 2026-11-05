@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -17,7 +18,6 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -41,6 +41,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -53,95 +54,104 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.LocalizedStrings
-import com.example.ui.theme.OceanBlueDarkText
-import com.example.ui.theme.OceanBluePrimary
+import com.example.ui.theme.LocalActivePalette
+import com.example.ui.theme.LocalAppDimens
 import com.example.ui.theme.StatusPaidBg
 import com.example.ui.theme.StatusPaidText
 import com.example.ui.theme.StatusPartialBg
 import com.example.ui.theme.StatusPartialText
 import com.example.ui.theme.StatusUnpaidBg
 import com.example.ui.theme.StatusUnpaidText
+import com.example.util.RealTimeLocationAndMediaHelper
 
 @Composable
 fun OceanSailboatLogo(modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier.size(72.dp)) {
-        val w = size.width
-        val h = size.height
+    val palette = LocalActivePalette.current
+    val dimens = LocalAppDimens.current
+    val logoSize = if (dimens.isCompact) 62.dp else 76.dp
 
-        // Left deep-blue sail
-        val leftSail = Path().apply {
-            moveTo(w * 0.48f, h * 0.10f)
-            lineTo(w * 0.48f, h * 0.68f)
-            lineTo(w * 0.16f, h * 0.68f)
-            close()
-        }
-        drawPath(
-            path = leftSail,
-            brush = Brush.verticalGradient(
-                colors = listOf(Color(0xFF2870F0), Color(0xFF144299))
+    Box(
+        modifier = modifier
+            .size(logoSize)
+            .shadow(8.dp, CircleShape)
+            .clip(CircleShape)
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(palette.primary, palette.deep)
+                )
             )
-        )
+            .border(2.dp, Color.White.copy(alpha = 0.85f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Canvas(modifier = Modifier.fillMaxSize().padding(10.dp)) {
+            val w = size.width
+            val h = size.height
 
-        // Right lighter-blue sail
-        val rightSail = Path().apply {
-            moveTo(w * 0.53f, h * 0.22f)
-            lineTo(w * 0.53f, h * 0.68f)
-            lineTo(w * 0.84f, h * 0.68f)
-            close()
-        }
-        drawPath(
-            path = rightSail,
-            brush = Brush.verticalGradient(
-                colors = listOf(Color(0xFF66A6FF), Color(0xFF2468E8))
+            val leftSail = Path().apply {
+                moveTo(w * 0.47f, h * 0.14f)
+                lineTo(w * 0.47f, h * 0.65f)
+                lineTo(w * 0.17f, h * 0.65f)
+                close()
+            }
+            drawPath(path = leftSail, color = Color.White)
+
+            val rightSail = Path().apply {
+                moveTo(w * 0.54f, h * 0.24f)
+                lineTo(w * 0.54f, h * 0.65f)
+                lineTo(w * 0.83f, h * 0.65f)
+                close()
+            }
+            drawPath(path = rightSail, color = palette.lightContainer)
+
+            val hull = Path().apply {
+                moveTo(w * 0.16f, h * 0.71f)
+                lineTo(w * 0.84f, h * 0.71f)
+                lineTo(w * 0.73f, h * 0.84f)
+                lineTo(w * 0.27f, h * 0.84f)
+                close()
+            }
+            drawPath(path = hull, color = Color.White)
+
+            drawLine(
+                color = palette.lightContainer,
+                start = Offset(w * 0.26f, h * 0.90f),
+                end = Offset(w * 0.74f, h * 0.90f),
+                strokeWidth = 4f,
+                cap = StrokeCap.Round
             )
-        )
-
-        // Hull
-        val hull = Path().apply {
-            moveTo(w * 0.14f, h * 0.73f)
-            lineTo(w * 0.86f, h * 0.73f)
-            lineTo(w * 0.75f, h * 0.86f)
-            lineTo(w * 0.25f, h * 0.86f)
-            close()
         }
-        drawPath(path = hull, color = Color(0xFF102A63))
-
-        // Gentle wave line beneath hull
-        drawLine(
-            color = Color(0xFF8AB8FF),
-            start = Offset(w * 0.20f, h * 0.92f),
-            end = Offset(w * 0.80f, h * 0.92f),
-            strokeWidth = 4f,
-            cap = StrokeCap.Round
-        )
     }
 }
 
 @Composable
 fun OceanHorizonIllustration(modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier.fillMaxWidth().height(175.dp)) {
+    val palette = LocalActivePalette.current
+    val dimens = LocalAppDimens.current
+    val bannerH = if (dimens.isCompact) 136.dp else 172.dp
+
+    Canvas(modifier = modifier.fillMaxWidth().height(bannerH)) {
         val w = size.width
         val h = size.height
 
-        // Soft sky-to-water gradient background
         drawRect(
             brush = Brush.verticalGradient(
                 colors = listOf(
-                    Color(0xFFF3F7FD),
-                    Color(0xFFDCEAFE),
-                    Color(0xFFBBD7FB),
-                    Color(0xFFEAF2FD)
+                    palette.lightBackground,
+                    palette.lightContainer.copy(alpha = 0.75f),
+                    palette.primary.copy(alpha = 0.28f),
+                    palette.lightBackground
                 )
             )
         )
 
-        // Distant soft mountain range
         val distantMountains = Path().apply {
             moveTo(0f, h * 0.56f)
             quadraticTo(w * 0.18f, h * 0.36f, w * 0.38f, h * 0.52f)
@@ -151,9 +161,8 @@ fun OceanHorizonIllustration(modifier: Modifier = Modifier) {
             lineTo(0f, h * 0.62f)
             close()
         }
-        drawPath(path = distantMountains, color = Color(0xFFC7DDFB))
+        drawPath(path = distantMountains, color = palette.lightContainer)
 
-        // Foreground island hills
         val nearHills = Path().apply {
             moveTo(0f, h * 0.62f)
             quadraticTo(w * 0.15f, h * 0.48f, w * 0.34f, h * 0.62f)
@@ -161,12 +170,11 @@ fun OceanHorizonIllustration(modifier: Modifier = Modifier) {
             quadraticTo(w * 0.85f, h * 0.46f, w, h * 0.62f)
             close()
         }
-        drawPath(path = nearHills, color = Color(0xFFA7C7F7))
+        drawPath(path = nearHills, color = palette.primary.copy(alpha = 0.35f))
 
-        // Calm ocean waterband
         drawRect(
             brush = Brush.verticalGradient(
-                colors = listOf(Color(0xFF8DB9F8), Color(0xFFD6E6FC), Color(0xFFEEF4FC)),
+                colors = listOf(palette.primary.copy(alpha = 0.42f), palette.lightContainer, palette.lightBackground),
                 startY = h * 0.62f,
                 endY = h
             ),
@@ -174,7 +182,6 @@ fun OceanHorizonIllustration(modifier: Modifier = Modifier) {
             size = Size(w, h * 0.38f)
         )
 
-        // Center sailboat on the horizon
         val cx = w * 0.5f
         val boatBaseY = h * 0.66f
 
@@ -187,7 +194,7 @@ fun OceanHorizonIllustration(modifier: Modifier = Modifier) {
         drawPath(
             path = mainSail,
             brush = Brush.verticalGradient(
-                colors = listOf(Color(0xFFFFFFFF), Color(0xFFDCEAFE))
+                colors = listOf(Color.White, palette.lightContainer)
             )
         )
 
@@ -200,19 +207,17 @@ fun OceanHorizonIllustration(modifier: Modifier = Modifier) {
         drawPath(
             path = jibSail,
             brush = Brush.verticalGradient(
-                colors = listOf(Color(0xFFEAF2FF), Color(0xFF9EC5FA))
+                colors = listOf(Color.White, palette.primary.copy(alpha = 0.45f))
             )
         )
 
-        // Mast
         drawLine(
-            color = Color(0xFF102A63),
+            color = palette.deep,
             start = Offset(cx, h * 0.12f),
             end = Offset(cx, boatBaseY - 6f),
             strokeWidth = 3f
         )
 
-        // Hull
         val boatHull = Path().apply {
             moveTo(cx - 42f, boatBaseY - 8f)
             lineTo(cx + 42f, boatBaseY - 8f)
@@ -220,14 +225,13 @@ fun OceanHorizonIllustration(modifier: Modifier = Modifier) {
             lineTo(cx - 30f, boatBaseY + 5f)
             close()
         }
-        drawPath(path = boatHull, color = Color(0xFF102A63))
+        drawPath(path = boatHull, color = palette.deep)
 
-        // Water reflection ripples
         for (i in 1..4) {
             val ry = boatBaseY + 10f + i * 7f
             val halfSpan = (32f - i * 5f).coerceAtLeast(8f)
             drawLine(
-                color = Color(0xFF1D5CE5).copy(alpha = 0.35f - i * 0.06f),
+                color = palette.primary.copy(alpha = 0.35f - i * 0.06f),
                 start = Offset(cx - halfSpan, ry),
                 end = Offset(cx + halfSpan, ry),
                 strokeWidth = 2.5f,
@@ -244,10 +248,17 @@ fun UserAvatarCircle(
     size: Dp = 44.dp,
     avatarIndex: Int = 0,
     showOnlineDot: Boolean = false,
-    wearSunglasses: Boolean = false
+    wearSunglasses: Boolean = false,
+    photoUri: String? = null
 ) {
+    val context = LocalContext.current
+    val palette = LocalActivePalette.current
+    val galleryBitmap = remember(photoUri) {
+        RealTimeLocationAndMediaHelper.loadImageBitmapFromUri(context, photoUri)
+    }
+
     val bgPalette = listOf(
-        listOf(Color(0xFFDCEAFE), Color(0xFFB6D4FE)),
+        listOf(palette.lightContainer, palette.primary.copy(alpha = 0.32f)),
         listOf(Color(0xFFE0E7FF), Color(0xFFC7D2FE)),
         listOf(Color(0xFFD1FAE5), Color(0xFFA7F3D0)),
         listOf(Color(0xFFFEF3C7), Color(0xFFFDE68A)),
@@ -265,99 +276,105 @@ fun UserAvatarCircle(
         Color(0xFF3F2314),
         Color(0xFF1E293B)
     )
-    val idx = ( kotlin.math.abs(name.hashCode()) + avatarIndex ) % bgPalette.size
+    val idx = (kotlin.math.abs(name.hashCode()) + avatarIndex) % bgPalette.size
     val skin = skinTones[idx % skinTones.size]
     val hair = hairColors[idx % hairColors.size]
     val shirtColors = listOf(
-        Color(0xFF1D5CE5),
-        Color(0xFF0F295A),
+        palette.primary,
+        palette.deep,
         Color(0xFF0D9488),
         Color(0xFF4F46E5),
-        Color(0xFF2563EB)
+        Color(0xFFDB5A8B)
     )
     val shirt = shirtColors[idx % shirtColors.size]
 
     Box(modifier = modifier.size(size)) {
-        Canvas(
-            modifier = Modifier
-                .fillMaxSize()
-                .clip(CircleShape)
-                .border(2.dp, Color.White, CircleShape)
-        ) {
-            val w = this.size.width
-            val h = this.size.height
-            drawRect(brush = Brush.verticalGradient(bgPalette[idx]))
-
-            // Shoulders / collar
-            drawArc(
-                color = shirt,
-                startAngle = 180f,
-                sweepAngle = 180f,
-                useCenter = true,
-                topLeft = Offset(w * 0.12f, h * 0.64f),
-                size = Size(w * 0.76f, h * 0.65f)
+        if (galleryBitmap != null) {
+            Image(
+                bitmap = galleryBitmap,
+                contentDescription = name,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape)
+                    .border(2.dp, Color.White, CircleShape)
             )
+        } else {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(CircleShape)
+                    .border(2.dp, Color.White, CircleShape)
+            ) {
+                val w = this.size.width
+                val h = this.size.height
+                drawRect(brush = Brush.verticalGradient(bgPalette[idx]))
 
-            // Neck
-            drawRoundRect(
-                color = skin,
-                topLeft = Offset(w * 0.41f, h * 0.54f),
-                size = Size(w * 0.18f, h * 0.16f),
-                cornerRadius = CornerRadius(6f, 6f)
-            )
+                drawArc(
+                    color = shirt,
+                    startAngle = 180f,
+                    sweepAngle = 180f,
+                    useCenter = true,
+                    topLeft = Offset(w * 0.12f, h * 0.64f),
+                    size = Size(w * 0.76f, h * 0.65f)
+                )
 
-            // Head
-            drawCircle(
-                color = skin,
-                radius = w * 0.23f,
-                center = Offset(w * 0.5f, h * 0.42f)
-            )
-
-            // Hair top
-            drawArc(
-                color = hair,
-                startAngle = 170f,
-                sweepAngle = 200f,
-                useCenter = true,
-                topLeft = Offset(w * 0.25f, h * 0.15f),
-                size = Size(w * 0.50f, h * 0.36f)
-            )
-
-            if (wearSunglasses || idx == 0) {
-                // Cool dark sunglasses matching Rahul Shah avatar in mockup
                 drawRoundRect(
-                    color = Color(0xFF0F172A),
-                    topLeft = Offset(w * 0.32f, h * 0.37f),
-                    size = Size(w * 0.15f, h * 0.09f),
-                    cornerRadius = CornerRadius(4f, 4f)
+                    color = skin,
+                    topLeft = Offset(w * 0.41f, h * 0.54f),
+                    size = Size(w * 0.18f, h * 0.16f),
+                    cornerRadius = CornerRadius(6f, 6f)
                 )
-                drawRoundRect(
-                    color = Color(0xFF0F172A),
-                    topLeft = Offset(w * 0.53f, h * 0.37f),
-                    size = Size(w * 0.15f, h * 0.09f),
-                    cornerRadius = CornerRadius(4f, 4f)
+
+                drawCircle(
+                    color = skin,
+                    radius = w * 0.23f,
+                    center = Offset(w * 0.5f, h * 0.42f)
                 )
-                drawLine(
-                    color = Color(0xFF0F172A),
-                    start = Offset(w * 0.47f, h * 0.40f),
-                    end = Offset(w * 0.53f, h * 0.40f),
-                    strokeWidth = 2.5f
+
+                drawArc(
+                    color = hair,
+                    startAngle = 170f,
+                    sweepAngle = 200f,
+                    useCenter = true,
+                    topLeft = Offset(w * 0.25f, h * 0.15f),
+                    size = Size(w * 0.50f, h * 0.36f)
                 )
-            } else {
-                drawCircle(color = hair, radius = w * 0.025f, center = Offset(w * 0.41f, h * 0.41f))
-                drawCircle(color = hair, radius = w * 0.025f, center = Offset(w * 0.59f, h * 0.41f))
+
+                if (wearSunglasses || idx == 0) {
+                    drawRoundRect(
+                        color = Color(0xFF0F172A),
+                        topLeft = Offset(w * 0.32f, h * 0.37f),
+                        size = Size(w * 0.15f, h * 0.09f),
+                        cornerRadius = CornerRadius(4f, 4f)
+                    )
+                    drawRoundRect(
+                        color = Color(0xFF0F172A),
+                        topLeft = Offset(w * 0.53f, h * 0.37f),
+                        size = Size(w * 0.15f, h * 0.09f),
+                        cornerRadius = CornerRadius(4f, 4f)
+                    )
+                    drawLine(
+                        color = Color(0xFF0F172A),
+                        start = Offset(w * 0.47f, h * 0.40f),
+                        end = Offset(w * 0.53f, h * 0.40f),
+                        strokeWidth = 2.5f
+                    )
+                } else {
+                    drawCircle(color = hair, radius = w * 0.025f, center = Offset(w * 0.41f, h * 0.41f))
+                    drawCircle(color = hair, radius = w * 0.025f, center = Offset(w * 0.59f, h * 0.41f))
+                }
+
+                drawArc(
+                    color = Color(0xFF7C2D12),
+                    startAngle = 20f,
+                    sweepAngle = 140f,
+                    useCenter = false,
+                    topLeft = Offset(w * 0.42f, h * 0.46f),
+                    size = Size(w * 0.16f, h * 0.08f),
+                    style = Stroke(width = 2.5f, cap = StrokeCap.Round)
+                )
             }
-
-            // Friendly smile
-            drawArc(
-                color = Color(0xFF7C2D12),
-                startAngle = 20f,
-                sweepAngle = 140f,
-                useCenter = false,
-                topLeft = Offset(w * 0.42f, h * 0.46f),
-                size = Size(w * 0.16f, h * 0.08f),
-                style = Stroke(width = 2.5f, cap = StrokeCap.Round)
-            )
         }
 
         if (showOnlineDot) {
@@ -375,6 +392,9 @@ fun UserAvatarCircle(
 
 @Composable
 fun CategoryIconTile(category: String, title: String) {
+    val palette = LocalActivePalette.current
+    val dimens = LocalAppDimens.current
+    val tileSize = if (dimens.isCompact) 42.dp else 48.dp
     val lower = (category + " " + title).lowercase()
     val (bgColor, tintColor, icon) = when {
         "pizza" in lower || "food" in lower || "dinner" in lower || "restaurant" in lower ->
@@ -386,12 +406,12 @@ fun CategoryIconTile(category: String, title: String) {
         "travel" in lower || "trip" in lower || "cab" in lower || "flight" in lower ->
             Triple(Color(0xFFE0F2FE), Color(0xFF0284C7), Icons.Filled.DirectionsCar)
         else ->
-            Triple(Color(0xFFE0EAFF), OceanBluePrimary, Icons.AutoMirrored.Filled.ReceiptLong)
+            Triple(palette.lightContainer, palette.primary, Icons.AutoMirrored.Filled.ReceiptLong)
     }
 
     Box(
         modifier = Modifier
-            .size(48.dp)
+            .size(tileSize)
             .clip(RoundedCornerShape(14.dp))
             .background(bgColor),
         contentAlignment = Alignment.Center
@@ -400,7 +420,7 @@ fun CategoryIconTile(category: String, title: String) {
             imageVector = icon,
             contentDescription = category,
             tint = tintColor,
-            modifier = Modifier.size(26.dp)
+            modifier = Modifier.size(if (dimens.isCompact) 22.dp else 26.dp)
         )
     }
 }
@@ -432,76 +452,92 @@ fun StatusPillBadge(status: String) {
 }
 
 @Composable
-fun ExpenseHeaderIllustration(title: String, category: String, modifier: Modifier = Modifier) {
+fun ExpenseHeaderIllustration(
+    title: String,
+    category: String,
+    modifier: Modifier = Modifier,
+    receiptUri: String? = null
+) {
+    val context = LocalContext.current
+    val palette = LocalActivePalette.current
+    val dimens = LocalAppDimens.current
+    val headerH = if (dimens.isCompact) 124.dp else 148.dp
+    val receiptBitmap = remember(receiptUri) {
+        RealTimeLocationAndMediaHelper.loadImageBitmapFromUri(context, receiptUri)
+    }
+
     val isPizzaOrFood = (title + " " + category).lowercase().let {
         "pizza" in it || "food" in it || "dinner" in it || "lunch" in it
     }
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(148.dp)
+            .height(headerH)
             .clip(RoundedCornerShape(18.dp))
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = size.width
-            val h = size.height
+        if (receiptBitmap != null) {
+            Image(
+                bitmap = receiptBitmap,
+                contentDescription = title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
 
-            if (isPizzaOrFood) {
-                // Warm rustic wood table + fresh artisan pizza illustration matching Screen 4 mockup
-                drawRect(
-                    brush = Brush.horizontalGradient(
-                        colors = listOf(Color(0xFF5C3A21), Color(0xFF8B5A2B), Color(0xFF4A2E1B))
+                if (isPizzaOrFood) {
+                    drawRect(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(Color(0xFF5C3A21), Color(0xFF8B5A2B), Color(0xFF4A2E1B))
+                        )
                     )
-                )
-                val cx = w * 0.54f
-                val cy = h * 0.52f
-                val radius = h * 0.62f
+                    val cx = w * 0.54f
+                    val cy = h * 0.52f
+                    val radius = h * 0.62f
 
-                // Wooden pizza board
-                drawCircle(color = Color(0xFFA47148), radius = radius * 1.08f, center = Offset(cx, cy))
-                // Golden crust
-                drawCircle(color = Color(0xFFE59838), radius = radius * 0.96f, center = Offset(cx, cy))
-                // Tomato & melted mozzarella base
-                drawCircle(color = Color(0xFFD9381E), radius = radius * 0.84f, center = Offset(cx, cy))
-                drawCircle(color = Color(0xFFFBBF24), radius = radius * 0.78f, center = Offset(cx, cy))
+                    drawCircle(color = Color(0xFFA47148), radius = radius * 1.08f, center = Offset(cx, cy))
+                    drawCircle(color = Color(0xFFE59838), radius = radius * 0.96f, center = Offset(cx, cy))
+                    drawCircle(color = Color(0xFFD9381E), radius = radius * 0.84f, center = Offset(cx, cy))
+                    drawCircle(color = Color(0xFFFBBF24), radius = radius * 0.78f, center = Offset(cx, cy))
 
-                // Slice lines
-                for (angle in listOf(0f, 45f, 90f, 135f)) {
-                    val rad = Math.toRadians(angle.toDouble())
-                    val dx = ( kotlin.math.cos(rad) * radius * 0.84f ).toFloat()
-                    val dy = ( kotlin.math.sin(rad) * radius * 0.84f ).toFloat()
-                    drawLine(
-                        color = Color(0xFFB45309),
-                        start = Offset(cx - dx, cy - dy),
-                        end = Offset(cx + dx, cy + dy),
-                        strokeWidth = 3f
+                    for (angle in listOf(0f, 45f, 90f, 135f)) {
+                        val rad = Math.toRadians(angle.toDouble())
+                        val dx = (kotlin.math.cos(rad) * radius * 0.84f).toFloat()
+                        val dy = (kotlin.math.sin(rad) * radius * 0.84f).toFloat()
+                        drawLine(
+                            color = Color(0xFFB45309),
+                            start = Offset(cx - dx, cy - dy),
+                            end = Offset(cx + dx, cy + dy),
+                            strokeWidth = 3f
+                        )
+                    }
+
+                    val offsets = listOf(
+                        Offset(-0.35f, -0.25f), Offset(0.30f, -0.30f),
+                        Offset(-0.25f, 0.32f), Offset(0.35f, 0.25f),
+                        Offset(0.0f, -0.42f), Offset(-0.45f, 0.05f), Offset(0.42f, -0.05f)
                     )
-                }
-
-                // Toppings (tomatoes, basil leaves, olives)
-                val offsets = listOf(
-                    Offset(-0.35f, -0.25f), Offset(0.30f, -0.30f),
-                    Offset(-0.25f, 0.32f), Offset(0.35f, 0.25f),
-                    Offset(0.0f, -0.42f), Offset(-0.45f, 0.05f), Offset(0.42f, -0.05f)
-                )
-                offsets.forEachIndexed { i, off ->
+                    offsets.forEachIndexed { i, off ->
+                        drawCircle(
+                            color = if (i % 2 == 0) Color(0xFFDC2626) else Color(0xFF15803D),
+                            radius = 9f,
+                            center = Offset(cx + off.x * radius, cy + off.y * radius)
+                        )
+                    }
+                } else {
+                    drawRect(
+                        brush = Brush.linearGradient(
+                            colors = listOf(palette.primary, palette.deep)
+                        )
+                    )
                     drawCircle(
-                        color = if (i % 2 == 0) Color(0xFFDC2626) else Color(0xFF15803D),
-                        radius = 9f,
-                        center = Offset(cx + off.x * radius, cy + off.y * radius)
+                        color = Color.White.copy(alpha = 0.14f),
+                        radius = h * 0.7f,
+                        center = Offset(w * 0.8f, h * 0.2f)
                     )
                 }
-            } else {
-                drawRect(
-                    brush = Brush.linearGradient(
-                        colors = listOf(Color(0xFF1D5CE5), Color(0xFF102A63))
-                    )
-                )
-                drawCircle(
-                    color = Color.White.copy(alpha = 0.12f),
-                    radius = h * 0.7f,
-                    center = Offset(w * 0.8f, h * 0.2f)
-                )
             }
         }
     }
@@ -514,10 +550,14 @@ fun SplitBleeBottomBar(
     onSelectTab: (String) -> Unit,
     onNewSplitClick: () -> Unit
 ) {
+    val palette = LocalActivePalette.current
+    val dimens = LocalAppDimens.current
+    val fabSize = if (dimens.isCompact) 46.dp else 54.dp
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = dimens.horizontalPadding, vertical = if (dimens.isCompact) 6.dp else 8.dp)
             .windowInsetsPadding(WindowInsets.navigationBars)
             .shadow(10.dp, RoundedCornerShape(32.dp)),
         shape = RoundedCornerShape(32.dp),
@@ -526,7 +566,7 @@ fun SplitBleeBottomBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = if (dimens.isCompact) 8.dp else 12.dp, vertical = if (dimens.isCompact) 6.dp else 8.dp),
             horizontalArrangement = Arrangement.SpaceAround,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -535,6 +575,7 @@ fun SplitBleeBottomBar(
                 selected = currentTab == "dashboard",
                 selectedIcon = Icons.Filled.Home,
                 unselectedIcon = Icons.Outlined.Home,
+                activeColor = palette.primary,
                 testTag = "nav_home",
                 onClick = { onSelectTab("dashboard") }
             )
@@ -543,20 +584,20 @@ fun SplitBleeBottomBar(
                 selected = currentTab == "groups",
                 selectedIcon = Icons.Filled.Group,
                 unselectedIcon = Icons.Outlined.Group,
+                activeColor = palette.primary,
                 testTag = "nav_groups",
                 onClick = { onSelectTab("groups") }
             )
 
-            // Central Ocean-Blue '+' Action Button matching Screen 2 mockup
             Box(
                 modifier = Modifier
-                    .size(54.dp)
+                    .size(fabSize)
                     .offset(y = (-2).dp)
                     .shadow(8.dp, CircleShape)
                     .clip(CircleShape)
                     .background(
                         Brush.verticalGradient(
-                            colors = listOf(Color(0xFF2B6FF7), OceanBluePrimary)
+                            colors = listOf(palette.primary, palette.deep)
                         )
                     )
                     .clickable(onClick = onNewSplitClick)
@@ -567,7 +608,7 @@ fun SplitBleeBottomBar(
                     imageVector = Icons.Filled.Add,
                     contentDescription = strings.newSplit,
                     tint = Color.White,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(if (dimens.isCompact) 24.dp else 28.dp)
                 )
             }
 
@@ -576,6 +617,7 @@ fun SplitBleeBottomBar(
                 selected = currentTab == "map",
                 selectedIcon = Icons.Filled.LocationOn,
                 unselectedIcon = Icons.Outlined.LocationOn,
+                activeColor = palette.primary,
                 testTag = "nav_map",
                 onClick = { onSelectTab("map") }
             )
@@ -584,6 +626,7 @@ fun SplitBleeBottomBar(
                 selected = currentTab == "settings",
                 selectedIcon = Icons.Filled.Person,
                 unselectedIcon = Icons.Outlined.Person,
+                activeColor = palette.primary,
                 testTag = "nav_profile",
                 onClick = { onSelectTab("settings") }
             )
@@ -597,15 +640,18 @@ private fun BottomNavTabItem(
     selected: Boolean,
     selectedIcon: androidx.compose.ui.graphics.vector.ImageVector,
     unselectedIcon: androidx.compose.ui.graphics.vector.ImageVector,
+    activeColor: Color,
     testTag: String,
     onClick: () -> Unit
 ) {
-    val tint = if (selected) OceanBluePrimary else Color(0xFF64748B)
+    val dimens = LocalAppDimens.current
+    val tint = if (selected) activeColor else MaterialTheme.colorScheme.onSurfaceVariant
     Column(
         modifier = Modifier
             .clip(RoundedCornerShape(16.dp))
+            .background(if (selected) activeColor.copy(alpha = 0.12f) else Color.Transparent)
             .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .padding(horizontal = if (dimens.isCompact) 8.dp else 12.dp, vertical = 4.dp)
             .testTag(testTag),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -613,14 +659,14 @@ private fun BottomNavTabItem(
             imageVector = if (selected) selectedIcon else unselectedIcon,
             contentDescription = label,
             tint = tint,
-            modifier = Modifier.size(23.dp)
+            modifier = Modifier.size(if (dimens.isCompact) 20.dp else 23.dp)
         )
         Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = label,
             color = tint,
-            fontSize = 11.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+            fontSize = if (dimens.isCompact) 10.sp else 11.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
         )
     }
 }

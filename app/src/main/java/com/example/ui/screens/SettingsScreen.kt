@@ -1,7 +1,14 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.Intent
+import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,6 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -24,13 +32,18 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.AttachMoney
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -70,15 +83,21 @@ import com.example.model.LocalizedStrings
 import com.example.model.PaymentEntry
 import com.example.model.UserProfile
 import com.example.ui.components.UserAvatarCircle
-import com.example.ui.theme.OceanBlueDarkText
-import com.example.ui.theme.OceanBluePrimary
+import com.example.ui.theme.LocalActivePalette
+import com.example.ui.theme.LocalAppDimens
+import com.example.ui.theme.SplitBleePalettes
 import com.example.util.ExportHelper
+import com.example.util.RealTimeLocationAndMediaHelper
 
 @Composable
 fun SettingsScreen(
     userProfile: UserProfile?,
     fallbackName: String,
     fallbackEmail: String,
+    activeTheme: String,
+    activeThemeMode: String,
+    activeUiScaleMode: String,
+    activePhotoUri: String?,
     expenses: List<ExpenseItem>,
     payments: List<PaymentEntry>,
     strings: LocalizedStrings,
@@ -92,18 +111,26 @@ fun SettingsScreen(
         currency: String,
         theme: String,
         themeMode: String,
+        uiScaleMode: String,
+        photoUrl: String?,
         notificationsEnabled: Boolean,
         locationSharingEnabled: Boolean
     ) -> Unit,
+    onNotifyStatus: (String) -> Unit = {},
     onSignOut: () -> Unit
 ) {
     BackHandler { onBack() }
 
     val context = LocalContext.current
-    val currentName = (userProfile?.displayName?.ifBlank { fallbackName } ?: fallbackName).ifBlank { "Rahul Shah" }
-    val currentEmail = (userProfile?.email?.ifBlank { fallbackEmail } ?: fallbackEmail).ifBlank { "rahul.shah@gmail.com" }
-    val currentTheme = userProfile?.theme ?: "Ocean Blue"
-    val currentThemeMode = userProfile?.themeMode ?: "Light"
+    val palette = LocalActivePalette.current
+    val dimens = LocalAppDimens.current
+
+    val currentName = (userProfile?.displayName?.ifBlank { fallbackName } ?: fallbackName).ifBlank { "SplitBlee User" }
+    val currentEmail = (userProfile?.email?.ifBlank { fallbackEmail } ?: fallbackEmail).ifBlank { "user@splitblee.app" }
+    val currentTheme = activeTheme
+    val currentThemeMode = activeThemeMode
+    val currentScaleMode = activeUiScaleMode
+    val currentPhotoUri = activePhotoUri
     val currentLang = userProfile?.preferredLanguage ?: "en"
     val currentCurrency = userProfile?.defaultCurrency ?: "USD"
     val notificationsOn = userProfile?.notificationsEnabled ?: true
@@ -111,18 +138,100 @@ fun SettingsScreen(
 
     var showEditProfileDialog by remember { mutableStateOf(false) }
     var showThemeDialog by remember { mutableStateOf(false) }
+    var showScaleDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
     var showCurrencyDialog by remember { mutableStateOf(false) }
     var showExportDialog by remember { mutableStateOf(false) }
+    var showPermissionsDialog by remember { mutableStateOf(false) }
     var showHelpDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+
+    var hasLocPerm by remember { mutableStateOf(RealTimeLocationAndMediaHelper.hasLocationPermission(context)) }
+    var hasCamPerm by remember { mutableStateOf(RealTimeLocationAndMediaHelper.hasCameraPermission(context)) }
+    var hasNotifPerm by remember { mutableStateOf(RealTimeLocationAndMediaHelper.hasNotificationPermission(context)) }
+
+    var pendingExportBytes by remember { mutableStateOf<ByteArray?>(null) }
+    var pendingExportLabel by remember { mutableStateOf("4K UHD Report") }
+
+    // 1. All-Permissions Runtime Request Launcher (Location + Camera + Notifications)
+    val allPermissionsLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        hasLocPerm = RealTimeLocationAndMediaHelper.hasLocationPermission(context)
+        hasCamPerm = RealTimeLocationAndMediaHelper.hasCameraPermission(context)
+        hasNotifPerm = RealTimeLocationAndMediaHelper.hasNotificationPermission(context)
+        val grantedCount = results.values.count { it }
+        onNotifyStatus("Permissions updated ($grantedCount granted). Gallery & SAF file access ready.")
+    }
+
+    // 2. Android System Gallery Photo Picker (Zero-permission compliant full gallery access)
+    val profilePhotoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+            }
+            onUpdatePreferences(
+                currentName,
+                userProfile?.age?.toInt(),
+                userProfile?.gender,
+                userProfile?.address,
+                currentLang,
+                currentCurrency,
+                currentTheme,
+                currentThemeMode,
+                currentScaleMode,
+                uri.toString(),
+                notificationsOn,
+                locationOn
+            )
+            onNotifyStatus("Profile photo updated from gallery in real time.")
+        }
+    }
+
+    // 3. System File Open Picker (Full File / Document Access)
+    val openDocumentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            onNotifyStatus("Opened file: ${uri.lastPathSegment ?: uri.toString()}")
+        }
+    }
+
+    // 4. System File Save Picker for 4K / 8K PNG, PDF, CSV, TXT Exports
+    val saveDocumentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("*/*")
+    ) { uri ->
+        val bytes = pendingExportBytes
+        if (uri != null && bytes != null) {
+            ExportHelper.writeBytesToUri(context, uri, bytes)
+                .onSuccess {
+                    ExportHelper.sendRealTimeNotification(
+                        context,
+                        "SplitBlee $pendingExportLabel Saved",
+                        "Saved ${bytes.size / 1024} KB directly to device files."
+                    )
+                    onNotifyStatus("Saved $pendingExportLabel (${bytes.size / 1024} KB) to device storage.")
+                }
+                .onFailure { err ->
+                    onNotifyStatus(err.localizedMessage ?: "Failed to save file")
+                }
+        }
+    }
+
+    val liveGps by RealTimeLocationAndMediaHelper.rememberLiveGpsLocation(context, hasLocPerm && locationOn)
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 10.dp, bottom = 110.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp)
+            .padding(horizontal = dimens.horizontalPadding),
+        contentPadding = PaddingValues(top = 8.dp, bottom = dimens.bottomBarClearance),
+        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing)
     ) {
         // Top Header Bar matching Screen 5 mockup: `<` | `Settings` | Gear Icon
         item {
@@ -135,7 +244,7 @@ fun SettingsScreen(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,
-                    modifier = Modifier.size(42.dp)
+                    modifier = Modifier.size(dimens.headerIconSize)
                 ) {
                     IconButton(
                         onClick = onBack,
@@ -152,7 +261,7 @@ fun SettingsScreen(
                 Text(
                     text = strings.settings,
                     color = MaterialTheme.colorScheme.onBackground,
-                    fontSize = 18.sp,
+                    fontSize = if (dimens.isCompact) 16.sp else 18.sp,
                     fontWeight = FontWeight.ExtraBold
                 )
 
@@ -160,7 +269,7 @@ fun SettingsScreen(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,
-                    modifier = Modifier.size(42.dp)
+                    modifier = Modifier.size(dimens.headerIconSize)
                 ) {
                     IconButton(
                         onClick = { showThemeDialog = true },
@@ -169,14 +278,14 @@ fun SettingsScreen(
                         Icon(
                             imageVector = Icons.Filled.Settings,
                             contentDescription = strings.settings,
-                            tint = MaterialTheme.colorScheme.onSurface
+                            tint = palette.primary
                         )
                     }
                 }
             }
         }
 
-        // Profile Summary Header matching Screen 5 mockup
+        // Profile Summary Header matching Screen 5 mockup with Gallery Photo Picker
         item {
             Row(
                 modifier = Modifier
@@ -184,64 +293,192 @@ fun SettingsScreen(
                     .padding(vertical = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                UserAvatarCircle(
-                    name = currentName,
-                    size = 86.dp,
-                    wearSunglasses = true
-                )
-                Spacer(modifier = Modifier.width(16.dp))
+                Box(
+                    modifier = Modifier.clickable {
+                        profilePhotoPicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    }
+                ) {
+                    UserAvatarCircle(
+                        name = currentName,
+                        size = dimens.avatarSizeLarge,
+                        wearSunglasses = true,
+                        photoUri = currentPhotoUri
+                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = palette.primary,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .size(26.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.AddPhotoAlternate,
+                                contentDescription = "Pick Gallery Avatar",
+                                tint = Color.White,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.width(14.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = currentName,
                             color = MaterialTheme.colorScheme.onBackground,
-                            fontSize = 20.sp,
+                            fontSize = if (dimens.isCompact) 18.sp else 20.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Icon(
                             imageVector = Icons.Filled.CheckCircle,
                             contentDescription = "Verified",
-                            tint = OceanBluePrimary,
+                            tint = palette.primary,
                             modifier = Modifier.size(18.dp)
                         )
                     }
                     Text(
                         text = currentEmail,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 13.sp
+                        fontSize = 12.sp
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Surface(
-                        onClick = { showEditProfileDialog = true },
-                        shape = RoundedCornerShape(20.dp),
-                        color = Color(0xFFDCE8FC),
-                        modifier = Modifier.testTag("edit_profile_button")
-                    ) {
-                        Text(
-                            text = strings.editProfile,
-                            color = OceanBlueDarkText,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 7.dp)
-                        )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Surface(
+                            onClick = { showEditProfileDialog = true },
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.testTag("edit_profile_button")
+                        ) {
+                            Text(
+                                text = strings.editProfile,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                            )
+                        }
+                        Surface(
+                            onClick = {
+                                profilePhotoPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            shape = RoundedCornerShape(20.dp),
+                            color = MaterialTheme.colorScheme.surface,
+                            shadowElevation = 1.dp,
+                            modifier = Modifier.testTag("pick_gallery_avatar_button")
+                        ) {
+                            Text(
+                                text = "Gallery Photo",
+                                color = palette.primary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            )
+                        }
                     }
                 }
             }
         }
 
-        // App Preferences Section matching Screen 5 mockup
+        // Instant Pastel Theme Swatch Strip (1-tap real-time switching!)
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Pastel & Signature Themes",
+                        color = MaterialTheme.colorScheme.onBackground,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        text = "Active: $currentTheme ($currentThemeMode)",
+                        color = palette.primary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(SplitBleePalettes.all, key = { it.name }) { itemPalette ->
+                        val isSelected = itemPalette.name.equals(currentTheme, ignoreCase = true)
+                        Surface(
+                            onClick = {
+                                onUpdatePreferences(
+                                    currentName,
+                                    userProfile?.age?.toInt(),
+                                    userProfile?.gender,
+                                    userProfile?.address,
+                                    currentLang,
+                                    currentCurrency,
+                                    itemPalette.name,
+                                    currentThemeMode,
+                                    currentScaleMode,
+                                    currentPhotoUri,
+                                    notificationsOn,
+                                    locationOn
+                                )
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isSelected) itemPalette.lightContainer else MaterialTheme.colorScheme.surface,
+                            shadowElevation = if (isSelected) 4.dp else 1.dp,
+                            modifier = Modifier
+                                .border(
+                                    width = if (isSelected) 2.dp else 1.dp,
+                                    color = if (isSelected) itemPalette.primary else MaterialTheme.colorScheme.outline,
+                                    shape = RoundedCornerShape(16.dp)
+                                )
+                                .testTag("theme_swatch_${itemPalette.name.replace(" ", "_").lowercase()}")
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    itemPalette.previewSwatches.forEach { swatchColor ->
+                                        Box(
+                                            modifier = Modifier
+                                                .size(16.dp)
+                                                .clip(CircleShape)
+                                                .background(swatchColor)
+                                                .border(1.dp, Color.White, CircleShape)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = itemPalette.name,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.Medium,
+                                    color = if (isSelected) itemPalette.deep else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // App Preferences Section matching Screen 5 mockup + Compact Display Mode
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = strings.appPreferences,
                     color = MaterialTheme.colorScheme.onBackground,
-                    fontSize = 16.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.ExtraBold
                 )
 
                 Surface(
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(dimens.cardRadius),
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,
                     modifier = Modifier.fillMaxWidth()
@@ -250,9 +487,22 @@ fun SettingsScreen(
                         SettingsPreferenceRow(
                             icon = Icons.Filled.Palette,
                             title = strings.theme,
-                            value = currentTheme,
+                            value = "$currentTheme • $currentThemeMode",
+                            accentColor = palette.primary,
                             testTag = "settings_theme_row",
                             onClick = { showThemeDialog = true }
+                        )
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                        )
+                        SettingsPreferenceRow(
+                            icon = Icons.Filled.AspectRatio,
+                            title = "Display Scaling & Compact Mode",
+                            value = if (dimens.isCompact && currentScaleMode == "Auto") "Auto (Compact)" else currentScaleMode,
+                            accentColor = palette.primary,
+                            testTag = "settings_compact_scale_row",
+                            onClick = { showScaleDialog = true }
                         )
                         HorizontalDivider(
                             modifier = Modifier.padding(horizontal = 16.dp),
@@ -262,6 +512,7 @@ fun SettingsScreen(
                             icon = Icons.Filled.Language,
                             title = strings.language,
                             value = AppLocalization.languageDisplayName(currentLang),
+                            accentColor = palette.primary,
                             testTag = "settings_language_row",
                             onClick = { showLanguageDialog = true }
                         )
@@ -273,6 +524,7 @@ fun SettingsScreen(
                             icon = Icons.Filled.AttachMoney,
                             title = strings.currency,
                             value = currentCurrency,
+                            accentColor = palette.primary,
                             testTag = "settings_currency_row",
                             onClick = { showCurrencyDialog = true }
                         )
@@ -289,20 +541,23 @@ fun SettingsScreen(
                             Icon(
                                 imageVector = Icons.Filled.NotificationsNone,
                                 contentDescription = strings.notifications,
-                                tint = OceanBlueDarkText,
+                                tint = palette.primary,
                                 modifier = Modifier.size(22.dp)
                             )
                             Spacer(modifier = Modifier.width(14.dp))
                             Text(
                                 text = strings.notifications,
                                 color = MaterialTheme.colorScheme.onSurface,
-                                fontSize = 15.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium,
                                 modifier = Modifier.weight(1f)
                             )
                             Switch(
                                 checked = notificationsOn,
                                 onCheckedChange = { enabled ->
+                                    if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasNotifPerm) {
+                                        allPermissionsLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+                                    }
                                     onUpdatePreferences(
                                         currentName,
                                         userProfile?.age?.toInt(),
@@ -312,13 +567,15 @@ fun SettingsScreen(
                                         currentCurrency,
                                         currentTheme,
                                         currentThemeMode,
+                                        currentScaleMode,
+                                        currentPhotoUri,
                                         enabled,
                                         locationOn
                                     )
                                 },
                                 colors = SwitchDefaults.colors(
                                     checkedThumbColor = Color.White,
-                                    checkedTrackColor = OceanBluePrimary
+                                    checkedTrackColor = palette.primary
                                 ),
                                 modifier = Modifier.testTag("settings_notifications_switch")
                             )
@@ -328,19 +585,79 @@ fun SettingsScreen(
             }
         }
 
-        // Data & Export Section matching Screen 5 mockup
+        // Permissions, Gallery & File Access Section
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Permissions, Gallery & File Access",
+                    color = MaterialTheme.colorScheme.onBackground,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+
+                Surface(
+                    shape = RoundedCornerShape(dimens.cardRadius),
+                    color = MaterialTheme.colorScheme.surface,
+                    shadowElevation = 2.dp,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        SettingsPreferenceRow(
+                            icon = Icons.Filled.Security,
+                            title = "Request All Device Permissions",
+                            value = if (hasLocPerm && hasCamPerm && hasNotifPerm) "All Granted" else "Grant Now",
+                            accentColor = palette.primary,
+                            testTag = "settings_permissions_row",
+                            onClick = { showPermissionsDialog = true }
+                        )
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                        )
+                        SettingsPreferenceRow(
+                            icon = Icons.Filled.AddPhotoAlternate,
+                            title = "Gallery Media Picker",
+                            value = "Select Photo",
+                            accentColor = palette.primary,
+                            testTag = "settings_gallery_picker_row",
+                            onClick = {
+                                profilePhotoPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            }
+                        )
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                        )
+                        SettingsPreferenceRow(
+                            icon = Icons.Filled.FolderOpen,
+                            title = "Device Files & Document Browser",
+                            value = "Browse Files",
+                            accentColor = palette.primary,
+                            testTag = "settings_browse_files_row",
+                            onClick = {
+                                openDocumentLauncher.launch(arrayOf("*/*"))
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Data & Export Section matching Screen 5 mockup + 4K / 8K UHD Resolution Export
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = strings.dataAndExport,
                     color = MaterialTheme.colorScheme.onBackground,
-                    fontSize = 16.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.ExtraBold
                 )
 
                 Surface(
                     onClick = { showExportDialog = true },
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(dimens.cardRadius),
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,
                     modifier = Modifier
@@ -355,30 +672,31 @@ fun SettingsScreen(
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(38.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(Color(0xFFEEF4FC)),
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.Description,
+                                imageVector = Icons.Filled.HighQuality,
                                 contentDescription = strings.exportDetails,
-                                tint = OceanBlueDarkText,
-                                modifier = Modifier.size(20.dp)
+                                tint = palette.primary,
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                         Spacer(modifier = Modifier.width(14.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = strings.exportDetails,
+                                text = "${strings.exportDetails} (4K & 8K UHD)",
                                 color = MaterialTheme.colorScheme.onSurface,
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "PDF • TXT • CSV",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 12.sp
+                                text = "4K UHD • 8K UHD • PDF • PNG • TXT • CSV",
+                                color = palette.primary,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                         Icon(
@@ -393,16 +711,16 @@ fun SettingsScreen(
 
         // About Section matching Screen 5 mockup
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = strings.about,
                     color = MaterialTheme.colorScheme.onBackground,
-                    fontSize = 16.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.ExtraBold
                 )
 
                 Surface(
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(dimens.cardRadius),
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,
                     modifier = Modifier.fillMaxWidth()
@@ -412,6 +730,7 @@ fun SettingsScreen(
                             icon = Icons.AutoMirrored.Filled.HelpOutline,
                             title = strings.helpAndSupport,
                             value = "",
+                            accentColor = palette.primary,
                             testTag = "settings_help_row",
                             onClick = { showHelpDialog = true }
                         )
@@ -423,6 +742,7 @@ fun SettingsScreen(
                             icon = Icons.Filled.Info,
                             title = strings.aboutSplitBlee,
                             value = "",
+                            accentColor = palette.primary,
                             testTag = "settings_about_row",
                             onClick = { showAboutDialog = true }
                         )
@@ -434,6 +754,7 @@ fun SettingsScreen(
                             icon = Icons.AutoMirrored.Filled.Logout,
                             title = "Sign Out",
                             value = "",
+                            accentColor = palette.primary,
                             testTag = "settings_sign_out_row",
                             onClick = onSignOut
                         )
@@ -442,7 +763,6 @@ fun SettingsScreen(
             }
         }
 
-        // Footer matching Screen 5 mockup
         item {
             Text(
                 text = "Made with \u2764\uFE0F by $currentName",
@@ -452,7 +772,7 @@ fun SettingsScreen(
                 textAlign = TextAlign.Center,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 6.dp)
+                    .padding(top = 4.dp)
             )
         }
     }
@@ -462,7 +782,7 @@ fun SettingsScreen(
         var nameInput by remember { mutableStateOf(currentName) }
         var ageInput by remember { mutableStateOf((userProfile?.age ?: 25L).toString()) }
         var genderInput by remember { mutableStateOf(userProfile?.gender ?: "Male") }
-        var addressInput by remember { mutableStateOf(userProfile?.address ?: "Thamel, Kathmandu") }
+        var addressInput by remember { mutableStateOf(userProfile?.address ?: liveGps?.addressLabel ?: "") }
         var locShare by remember { mutableStateOf(locationOn) }
 
         AlertDialog(
@@ -496,7 +816,7 @@ fun SettingsScreen(
                     OutlinedTextField(
                         value = addressInput,
                         onValueChange = { addressInput = it },
-                        label = { Text("Optional Shared Place / Address") },
+                        label = { Text("Shared Place / Live Address") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -505,7 +825,7 @@ fun SettingsScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Share my location pin on Map", fontSize = 13.sp)
+                        Text("Share my live GPS pin on Map", fontSize = 13.sp)
                         Switch(checked = locShare, onCheckedChange = { locShare = it })
                     }
                 }
@@ -522,11 +842,14 @@ fun SettingsScreen(
                             currentCurrency,
                             currentTheme,
                             currentThemeMode,
+                            currentScaleMode,
+                            currentPhotoUri,
                             notificationsOn,
                             locShare
                         )
                         showEditProfileDialog = false
-                    }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary)
                 ) {
                     Text("Save Profile")
                 }
@@ -539,31 +862,20 @@ fun SettingsScreen(
         )
     }
 
-    // Theme Selector Dialog
+    // Theme Studio Dialog (Pastel Themes + Classic Themes + Light/Dark/System)
     if (showThemeDialog) {
-        val themes = listOf("Ocean Blue", "Mint", "Lavender", "Sand", "Graphite", "Rose")
         val modes = listOf("Light", "Dark", "System")
         var selectedTheme by remember { mutableStateOf(currentTheme) }
         var selectedMode by remember { mutableStateOf(currentThemeMode) }
 
         AlertDialog(
             onDismissRequest = { showThemeDialog = false },
-            title = { Text("Appearance & Theme", fontWeight = FontWeight.Bold) },
+            title = { Text("Pastel & Signature Themes", fontWeight = FontWeight.Bold) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Palette (Ocean Blue is Mockup Default):", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    themes.chunked(2).forEach { pair ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            pair.forEach { t ->
-                                FilterChip(
-                                    selected = selectedTheme == t,
-                                    onClick = { selectedTheme = t },
-                                    label = { Text(t, fontSize = 12.sp) }
-                                )
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(4.dp))
+                Column(
+                    modifier = Modifier.height(360.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
                     Text("Display Mode:", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         modes.forEach { m ->
@@ -572,6 +884,52 @@ fun SettingsScreen(
                                 onClick = { selectedMode = m },
                                 label = { Text(m, fontSize = 12.sp) }
                             )
+                        }
+                    }
+                    Text("Select Pastel or Classic Palette:", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(SplitBleePalettes.all, key = { it.name }) { p ->
+                            val isChosen = selectedTheme == p.name
+                            Surface(
+                                onClick = { selectedTheme = p.name },
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isChosen) p.lightContainer else MaterialTheme.colorScheme.surfaceVariant,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        p.previewSwatches.forEach { sw ->
+                                            Box(
+                                                modifier = Modifier
+                                                    .padding(end = 4.dp)
+                                                    .size(16.dp)
+                                                    .clip(CircleShape)
+                                                    .background(sw)
+                                                    .border(1.dp, Color.White, CircleShape)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = if (p.isPastel) "${p.name} (Pastel)" else p.name,
+                                            fontWeight = if (isChosen) FontWeight.ExtraBold else FontWeight.Medium,
+                                            fontSize = 13.sp,
+                                            color = if (isChosen) p.deep else MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                    if (isChosen) {
+                                        Icon(
+                                            imageVector = Icons.Filled.CheckCircle,
+                                            contentDescription = null,
+                                            tint = p.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -588,13 +946,16 @@ fun SettingsScreen(
                             currentCurrency,
                             selectedTheme,
                             selectedMode,
+                            currentScaleMode,
+                            currentPhotoUri,
                             notificationsOn,
                             locationOn
                         )
                         showThemeDialog = false
-                    }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary)
                 ) {
-                    Text("Apply")
+                    Text("Apply Live")
                 }
             },
             dismissButton = {
@@ -605,7 +966,136 @@ fun SettingsScreen(
         )
     }
 
-    // Language Selector Dialog (Immediate switch without logout!)
+    // Compact Mode & Phone Display Scaling Dialog
+    if (showScaleDialog) {
+        val scaleOptions = listOf(
+            "Auto" to "Auto-Fit Phone Display (Automatically scales to screen width & height)",
+            "Compact" to "Compact Mode (Optimized for small phones — resizes entire UI, cards & text)",
+            "Standard" to "Standard Mode (Default 100% Material 3 density)",
+            "Expanded" to "Expanded Mode (Larger typography & touch targets)"
+        )
+        AlertDialog(
+            onDismissRequest = { showScaleDialog = false },
+            title = { Text("Display Size & Compact Mode", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    scaleOptions.forEach { (modeKey, desc) ->
+                        val active = currentScaleMode == modeKey
+                        Surface(
+                            onClick = {
+                                onUpdatePreferences(
+                                    currentName,
+                                    userProfile?.age?.toInt(),
+                                    userProfile?.gender,
+                                    userProfile?.address,
+                                    currentLang,
+                                    currentCurrency,
+                                    currentTheme,
+                                    currentThemeMode,
+                                    modeKey,
+                                    currentPhotoUri,
+                                    notificationsOn,
+                                    locationOn
+                                )
+                                showScaleDialog = false
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = modeKey,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    fontSize = 14.sp,
+                                    color = if (active) palette.primary else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = desc,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showScaleDialog = false }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
+    // Permissions & System Access Dialog
+    if (showPermissionsDialog) {
+        AlertDialog(
+            onDismissRequest = { showPermissionsDialog = false },
+            title = { Text("Permissions & System Access", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Grant hardware & system permissions for real-time GPS pins, camera receipt capture, notifications, gallery photos, and file exports:",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    PermissionStatusLine("Fine & Coarse GPS Location", hasLocPerm)
+                    PermissionStatusLine("Camera Receipt Capture", hasCamPerm)
+                    PermissionStatusLine("Real-Time Notifications", hasNotifPerm)
+                    PermissionStatusLine("Android Gallery Photo Picker", true)
+                    PermissionStatusLine("Storage Access Framework (4K/8K Files)", true)
+
+                    Button(
+                        onClick = {
+                            val perms = mutableListOf(
+                                Manifest.permission.ACCESS_FINE_LOCATION,
+                                Manifest.permission.ACCESS_COARSE_LOCATION,
+                                Manifest.permission.CAMERA
+                            )
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                perms.add(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                            allPermissionsLauncher.launch(perms.toTypedArray())
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Request All Runtime Permissions")
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            showPermissionsDialog = false
+                            profilePhotoPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Open Gallery Photo Picker")
+                    }
+
+                    OutlinedButton(
+                        onClick = {
+                            showPermissionsDialog = false
+                            openDocumentLauncher.launch(arrayOf("*/*"))
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Open Full File & Document Picker")
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPermissionsDialog = false }) {
+                    Text("Done")
+                }
+            }
+        )
+    }
+
+    // Language Selector Dialog
     if (showLanguageDialog) {
         val langs = listOf(
             "en" to "English (Default)",
@@ -629,13 +1119,15 @@ fun SettingsScreen(
                                     currentCurrency,
                                     currentTheme,
                                     currentThemeMode,
+                                    currentScaleMode,
+                                    currentPhotoUri,
                                     notificationsOn,
                                     locationOn
                                 )
                                 showLanguageDialog = false
                             },
                             shape = RoundedCornerShape(12.dp),
-                            color = if (currentLang == code) Color(0xFFDCE8FC) else MaterialTheme.colorScheme.surfaceVariant,
+                            color = if (currentLang == code) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
@@ -691,13 +1183,15 @@ fun SettingsScreen(
                                         spec.code,
                                         currentTheme,
                                         currentThemeMode,
+                                        currentScaleMode,
+                                        currentPhotoUri,
                                         notificationsOn,
                                         locationOn
                                     )
                                     showCurrencyDialog = false
                                 },
                                 shape = RoundedCornerShape(10.dp),
-                                color = if (currentCurrency == spec.code) Color(0xFFDCE8FC) else MaterialTheme.colorScheme.surfaceVariant,
+                                color = if (currentCurrency == spec.code) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Row(
@@ -705,7 +1199,7 @@ fun SettingsScreen(
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
                                     Text("${spec.code} — ${spec.name}", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                    Text(spec.symbol.trim(), fontWeight = FontWeight.Bold, color = OceanBluePrimary)
+                                    Text(spec.symbol.trim(), fontWeight = FontWeight.Bold, color = palette.primary)
                                 }
                             }
                         }
@@ -720,9 +1214,10 @@ fun SettingsScreen(
         )
     }
 
-    // Data & Export Dialog (Scope Selection + PDF / TXT / CSV Export)
+    // 4K & 8K UHD Data & Export Dialog
     if (showExportDialog) {
         var scopeSelection by remember { mutableStateOf("All Records") }
+        var resolutionSelection by remember { mutableStateOf("4K UHD") }
         val scopedExpenses = when (scopeSelection) {
             "Paid Only" -> expenses.filter { it.status == "PAID" }
             "Unpaid Only" -> expenses.filter { it.status != "PAID" }
@@ -731,12 +1226,12 @@ fun SettingsScreen(
 
         AlertDialog(
             onDismissRequest = { showExportDialog = false },
-            title = { Text("Data & Export (PDF • TXT • CSV)", fontWeight = FontWeight.Bold) },
+            title = { Text("4K & 8K UHD Data Export", fontWeight = FontWeight.Bold) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        text = "Scope preview: ${scopedExpenses.size} expenses & ${payments.size} ledger payments",
-                        fontSize = 13.sp,
+                        text = "Theme: $currentTheme • Scope: ${scopedExpenses.size} splits & ${payments.size} payments",
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -748,41 +1243,84 @@ fun SettingsScreen(
                             )
                         }
                     }
+                    Text("Export Resolution:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("4K UHD", "8K UHD", "Standard").forEach { resOpt ->
+                            FilterChip(
+                                selected = resolutionSelection == resOpt,
+                                onClick = { resolutionSelection = resOpt },
+                                label = { Text(resOpt, fontSize = 11.sp) }
+                            )
+                        }
+                    }
+
                     Button(
                         onClick = {
-                            val pdfBytes = ExportHelper.buildPdfSummaryBytes(scopeSelection, scopedExpenses, payments)
-                            val txtReport = ExportHelper.buildTxtReport(
-                                "$scopeSelection (PDF Generated: ${pdfBytes.size} bytes)",
-                                scopedExpenses,
-                                payments
+                            pendingExportLabel = "$resolutionSelection Poster PNG"
+                            pendingExportBytes = ExportHelper.buildHighResPosterPngBytes(
+                                scopeLabel = scopeSelection,
+                                expenses = scopedExpenses,
+                                payments = payments,
+                                themeName = currentTheme,
+                                resolution = resolutionSelection
                             )
-                            ExportHelper.shareTextContent(context, "SplitBlee PDF/Report ($scopeSelection)", txtReport)
+                            val tag = resolutionSelection.substringBefore(" ")
                             showExportDialog = false
+                            saveDocumentLauncher.launch("SplitBlee_${currentTheme.replace(" ", "_")}_${tag}_Report.png")
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = OceanBluePrimary),
-                        modifier = Modifier.fillMaxWidth()
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
+                        modifier = Modifier.fillMaxWidth().testTag("export_high_res_png_button")
                     ) {
-                        Text("Export PDF & Summary Report")
+                        Text("Save $resolutionSelection Visual Poster (PNG)")
                     }
-                    OutlinedButton(
+
+                    Button(
                         onClick = {
-                            val txt = ExportHelper.buildTxtReport(scopeSelection, scopedExpenses, payments)
-                            ExportHelper.shareTextContent(context, "SplitBlee TXT Export", txt)
+                            pendingExportLabel = "$resolutionSelection Vector PDF"
+                            pendingExportBytes = ExportHelper.buildPdfSummaryBytes(
+                                scopeLabel = scopeSelection,
+                                expenses = scopedExpenses,
+                                payments = payments,
+                                themeName = currentTheme,
+                                resolution = resolutionSelection
+                            )
+                            val tag = resolutionSelection.substringBefore(" ")
                             showExportDialog = false
+                            saveDocumentLauncher.launch("SplitBlee_${currentTheme.replace(" ", "_")}_${tag}_Report.pdf")
                         },
-                        modifier = Modifier.fillMaxWidth()
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.deep),
+                        modifier = Modifier.fillMaxWidth().testTag("export_high_res_pdf_button")
                     ) {
-                        Text("Export Plain-Text (TXT — UTF-8)")
+                        Text("Save $resolutionSelection Vector Report (PDF)")
                     }
-                    OutlinedButton(
-                        onClick = {
-                            val csv = ExportHelper.buildCsvReport(scopedExpenses)
-                            ExportHelper.shareTextContent(context, "SplitBlee CSV Export", csv)
-                            showExportDialog = false
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Export Spreadsheet (CSV — UTF-8)")
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick = {
+                                val txt = ExportHelper.buildTxtReport(
+                                    scopeSelection,
+                                    scopedExpenses,
+                                    payments,
+                                    currentTheme,
+                                    resolutionSelection
+                                )
+                                ExportHelper.shareTextContent(context, "SplitBlee TXT Export ($resolutionSelection)", txt)
+                                showExportDialog = false
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Share TXT", fontSize = 12.sp)
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                val csv = ExportHelper.buildCsvReport(scopedExpenses)
+                                ExportHelper.shareTextContent(context, "SplitBlee CSV Export", csv)
+                                showExportDialog = false
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("Share CSV", fontSize = 12.sp)
+                        }
                     }
                 }
             },
@@ -800,9 +1338,9 @@ fun SettingsScreen(
             title = { Text(strings.helpAndSupport, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    "• Create Equal, Percentage, Exact, or Item-based splits with deterministic minor-unit rounding.\n" +
-                        "• Record payments in Split Details to update statuses in real time.\n" +
-                        "• Export PDF, TXT, or CSV reports anytime from Settings → Data & Export."
+                    "• Pastel & Classic Themes: Switch instantaneously from the Settings swatch bar or Dashboard header.\n" +
+                        "• Compact Mode: Automatically scales typography, cards, and spacing for small phone screens.\n" +
+                        "• 4K & 8K UHD Exports: Save high-resolution themed PNG posters and vector PDFs directly to device files."
                 )
             },
             confirmButton = {
@@ -814,11 +1352,11 @@ fun SettingsScreen(
     if (showAboutDialog) {
         AlertDialog(
             onDismissRequest = { showAboutDialog = false },
-            title = { Text("About SplitBlee v1.0", fontWeight = FontWeight.Bold) },
+            title = { Text("About SplitBlee v2.0", fontWeight = FontWeight.Bold) },
             text = {
                 Text(
                     "SplitBlee — Split. Share. Enjoy.\n\n" +
-                        "Built with Ocean-Blue minimal mobile-first design, real-time Cloud Firestore synchronization, ISO 4217 multi-currency minor-unit precision, and privacy-first friend map controls."
+                        "Real-time Cloud Firestore financial ledger with Pastel & Ocean themes, responsive Compact Mode for small displays, live GPS telemetry, gallery receipt picker, and 4K/8K UHD export."
                 )
             },
             confirmButton = {
@@ -829,32 +1367,51 @@ fun SettingsScreen(
 }
 
 @Composable
+private fun PermissionStatusLine(label: String, granted: Boolean) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text(
+            text = if (granted) "● Active" else "○ Request",
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = if (granted) Color(0xFF15803D) else Color(0xFFB45309)
+        )
+    }
+}
+
+@Composable
 private fun SettingsPreferenceRow(
     icon: ImageVector,
     title: String,
     value: String,
+    accentColor: Color,
     testTag: String,
     onClick: () -> Unit
 ) {
+    val dimens = LocalAppDimens.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .padding(horizontal = 16.dp, vertical = if (dimens.isCompact) 11.dp else 14.dp)
             .testTag(testTag),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Icon(
             imageVector = icon,
             contentDescription = title,
-            tint = OceanBlueDarkText,
-            modifier = Modifier.size(22.dp)
+            tint = accentColor,
+            modifier = Modifier.size(21.dp)
         )
         Spacer(modifier = Modifier.width(14.dp))
         Text(
             text = title,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 15.sp,
+            fontSize = if (dimens.isCompact) 13.sp else 15.sp,
             fontWeight = FontWeight.Medium,
             modifier = Modifier.weight(1f)
         )
@@ -862,8 +1419,8 @@ private fun SettingsPreferenceRow(
             Text(
                 text = value,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
             )
             Spacer(modifier = Modifier.width(6.dp))
         }

@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import android.Manifest
-import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,8 +32,8 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.NearMe
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -71,17 +70,18 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import com.example.model.CurrencyCatalog
 import com.example.model.FriendProfile
 import com.example.model.UserProfile
 import com.example.ui.UiState
 import com.example.ui.components.UserAvatarCircle
-import com.example.ui.theme.OceanBlueDarkText
-import com.example.ui.theme.OceanBluePrimary
-import com.example.ui.theme.OceanBlueSecondaryText
+import com.example.ui.theme.LocalActivePalette
+import com.example.ui.theme.LocalAppDimens
+import com.example.util.RealTimeLocationAndMediaHelper
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -89,25 +89,40 @@ fun FriendsMapScreen(
     userProfile: UserProfile?,
     friendsState: UiState<List<FriendProfile>>,
     onBack: () -> Unit,
-    onAddFriend: (name: String, email: String?, age: Int?, gender: String, address: String?, locationSharing: Boolean, currency: String, avatarIndex: Int) -> Unit,
-    onToggleFriendLocation: (FriendProfile, Boolean) -> Unit,
-    onToggleFriendBlocked: (FriendProfile) -> Unit,
-    onSeedStarterFriends: () -> Unit
+    onAddFriend: (
+        name: String,
+        email: String?,
+        age: Int?,
+        gender: String,
+        address: String?,
+        locationSharing: Boolean,
+        latitude: Double?,
+        longitude: Double?,
+        currency: String,
+        avatarIndex: Int
+    ) -> Unit,
+    onToggleFriendLocation: (FriendProfile, Boolean, Double?, Double?, String?) -> Unit,
+    onToggleFriendBlocked: (FriendProfile) -> Unit
 ) {
     BackHandler { onBack() }
 
     val context = LocalContext.current
+    val palette = LocalActivePalette.current
+    val dimens = LocalAppDimens.current
+
     var isMapView by remember { mutableStateOf(true) }
     var searchQuery by remember { mutableStateOf("") }
     var showAddFriendDialog by remember { mutableStateOf(false) }
     var showProfileSheet by remember { mutableStateOf(false) }
     var locationPermissionGranted by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
-                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        )
+        mutableStateOf(RealTimeLocationAndMediaHelper.hasLocationPermission(context))
     }
     var locationStatusBanner by remember { mutableStateOf<String?>(null) }
+
+    val liveGpsState by RealTimeLocationAndMediaHelper.rememberLiveGpsLocation(
+        context = context,
+        enabled = locationPermissionGranted
+    )
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -116,9 +131,9 @@ fun FriendsMapScreen(
             result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         locationPermissionGranted = granted
         locationStatusBanner = if (granted) {
-            "Location permission granted. Explicit sharing remains controlled per friend."
+            "Live GPS receiver active. Explicit friend pin sharing remains controlled per friend."
         } else {
-            "Location permission denied. Switching to List view works without location permission."
+            "Location permission denied. List view works without GPS access."
         }
     }
 
@@ -140,9 +155,9 @@ fun FriendsMapScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .padding(horizontal = dimens.horizontalPadding, vertical = 6.dp)
     ) {
-        // Top Header Bar matching Screen 3 mockup: Back `<`, `Map | List` segmented pill, Filter/Add button
+        // Top Header Bar matching Screen 3 mockup: Back `<`, `Map | List` segmented pill, Add Friend button
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -152,7 +167,7 @@ fun FriendsMapScreen(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 2.dp,
-                modifier = Modifier.size(42.dp)
+                modifier = Modifier.size(dimens.headerIconSize)
             ) {
                 IconButton(
                     onClick = onBack,
@@ -171,7 +186,7 @@ fun FriendsMapScreen(
                 shape = RoundedCornerShape(28.dp),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 2.dp,
-                modifier = Modifier.height(42.dp)
+                modifier = Modifier.height(dimens.headerIconSize)
             ) {
                 Row(
                     modifier = Modifier.padding(4.dp),
@@ -180,32 +195,32 @@ fun FriendsMapScreen(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(24.dp))
-                            .background(if (isMapView) OceanBluePrimary else Color.Transparent)
+                            .background(if (isMapView) palette.primary else Color.Transparent)
                             .clickable { isMapView = true }
-                            .padding(horizontal = 24.dp, vertical = 6.dp)
+                            .padding(horizontal = if (dimens.isCompact) 18.dp else 24.dp, vertical = 5.dp)
                             .testTag("toggle_map_view"),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = "Map",
                             color = if (isMapView) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(24.dp))
-                            .background(if (!isMapView) OceanBluePrimary else Color.Transparent)
+                            .background(if (!isMapView) palette.primary else Color.Transparent)
                             .clickable { isMapView = false }
-                            .padding(horizontal = 24.dp, vertical = 6.dp)
+                            .padding(horizontal = if (dimens.isCompact) 18.dp else 24.dp, vertical = 5.dp)
                             .testTag("toggle_list_view"),
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
                             text = "List",
                             color = if (!isMapView) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 14.sp,
+                            fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -216,56 +231,60 @@ fun FriendsMapScreen(
                 shape = CircleShape,
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 2.dp,
-                modifier = Modifier.size(42.dp)
+                modifier = Modifier.size(dimens.headerIconSize)
             ) {
                 IconButton(
                     onClick = { showAddFriendDialog = true },
                     modifier = Modifier.testTag("map_add_friend_button")
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.Tune,
-                        contentDescription = "Add or Filter Friends",
-                        tint = MaterialTheme.colorScheme.onSurface
+                        imageVector = Icons.Filled.PersonAdd,
+                        contentDescription = "Add Friend",
+                        tint = palette.primary
                     )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(8.dp))
 
-        if (locationStatusBanner != null) {
+        // Live GPS Telemetry Banner
+        val gpsText = liveGpsState?.let { gps ->
+            "● Live GPS (${gps.provider}): ${String.format(Locale.US, "%.5f, %.5f", gps.latitude, gps.longitude)} (±${gps.accuracyMeters.toInt()}m) • ${gps.addressLabel}"
+        } ?: locationStatusBanner
+
+        if (!gpsText.isNullOrBlank()) {
             Surface(
-                color = Color(0xFFE0ECFF),
+                color = MaterialTheme.colorScheme.primaryContainer,
                 shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
             ) {
                 Text(
-                    text = locationStatusBanner ?: "",
-                    color = OceanBlueDarkText,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    text = gpsText,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                 )
             }
         }
 
         if (isMapView) {
-            // Map + Bottom Compact Friend Card matching Screen 3 mockup
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .clip(RoundedCornerShape(26.dp))
-                    .background(Color(0xFFE4EFFC))
+                    .clip(RoundedCornerShape(dimens.cardRadius))
+                    .background(palette.lightContainer.copy(alpha = 0.55f))
             ) {
-                // Custom City Map Canvas
                 Canvas(modifier = Modifier.fillMaxSize()) {
                     val w = size.width
                     val h = size.height
 
-                    // Soft map base
-                    drawRect(color = Color(0xFFE7F0FA))
+                    drawRect(color = palette.lightBackground)
 
-                    // Green park areas
                     val park1 = Path().apply {
                         moveTo(w * 0.65f, h * 0.05f)
                         lineTo(w * 0.95f, h * 0.12f)
@@ -284,18 +303,16 @@ fun FriendsMapScreen(
                     }
                     drawPath(park2, color = Color(0xFFD6F0DF))
 
-                    // River channel
                     val river = Path().apply {
                         moveTo(w * 0.18f, 0f)
                         quadraticTo(w * 0.42f, h * 0.38f, w * 0.78f, h * 0.85f)
                     }
                     drawPath(
                         path = river,
-                        color = Color(0xFFB9D7FA),
-                        style = Stroke(width = 36f, cap = StrokeCap.Round)
+                        color = palette.lightContainer,
+                        style = Stroke(width = 34f, cap = StrokeCap.Round)
                     )
 
-                    // Major and minor roads
                     val roadLines = listOf(
                         Offset(0f, h * 0.22f) to Offset(w, h * 0.48f),
                         Offset(0f, h * 0.65f) to Offset(w, h * 0.32f),
@@ -305,10 +322,10 @@ fun FriendsMapScreen(
                     )
                     roadLines.forEach { (start, end) ->
                         drawLine(
-                            color = Color.White.copy(alpha = 0.85f),
+                            color = Color.White.copy(alpha = 0.88f),
                             start = start,
                             end = end,
-                            strokeWidth = 14f,
+                            strokeWidth = 13f,
                             cap = StrokeCap.Round
                         )
                     }
@@ -317,10 +334,10 @@ fun FriendsMapScreen(
                 // Surrounding Friend Pins (only for friends with locationSharing == true)
                 val sharingFriends = allFriends.filter { it.locationSharing && it.status != "Blocked" }
                 val pinPositions = listOf(
-                    Offset(0.22f, 0.24f),
-                    Offset(0.76f, 0.26f),
-                    Offset(0.20f, 0.62f),
-                    Offset(0.74f, 0.56f)
+                    Offset(0.18f, 0.20f),
+                    Offset(0.74f, 0.22f),
+                    Offset(0.18f, 0.58f),
+                    Offset(0.72f, 0.54f)
                 )
 
                 sharingFriends.filter { it.id != selectedFriend?.id }.take(4).forEachIndexed { index, friend ->
@@ -329,8 +346,8 @@ fun FriendsMapScreen(
                         modifier = Modifier
                             .align(Alignment.TopStart)
                             .offset(
-                                x = (pos.x * 260).dp,
-                                y = (pos.y * 230).dp
+                                x = (pos.x * 230).dp,
+                                y = (pos.y * 190).dp
                             )
                             .clickable { selectedFriendId = friend.id }
                             .testTag("map_pin_${friend.id}"),
@@ -338,7 +355,7 @@ fun FriendsMapScreen(
                     ) {
                         UserAvatarCircle(
                             name = friend.name,
-                            size = 54.dp,
+                            size = if (dimens.isCompact) 44.dp else 52.dp,
                             avatarIndex = friend.avatarIndex.toInt(),
                             showOnlineDot = friend.isOnline
                         )
@@ -347,48 +364,49 @@ fun FriendsMapScreen(
 
                 // Central Highlighted Friend Pin matching Screen 3 mockup
                 if (selectedFriend != null) {
+                    val centralSize = if (dimens.isCompact) 74.dp else 88.dp
+                    val innerAvatar = if (dimens.isCompact) 62.dp else 74.dp
                     Column(
                         modifier = Modifier
                             .align(Alignment.Center)
-                            .offset(y = (-16).dp)
+                            .offset(y = (-12).dp)
                             .clickable { showProfileSheet = true }
                             .testTag("map_central_friend_pin"),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Box(
                             modifier = Modifier
-                                .size(92.dp)
+                                .size(centralSize)
                                 .shadow(12.dp, CircleShape)
                                 .clip(CircleShape)
                                 .background(
                                     Brush.verticalGradient(
-                                        colors = listOf(Color(0xFF3B82F6), OceanBluePrimary)
+                                        colors = listOf(palette.primary, palette.deep)
                                     )
                                 )
-                                .padding(6.dp),
+                                .padding(5.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             UserAvatarCircle(
                                 name = selectedFriend.name,
-                                size = 78.dp,
+                                size = innerAvatar,
                                 avatarIndex = selectedFriend.avatarIndex.toInt(),
                                 wearSunglasses = true
                             )
                         }
-                        // Teardrop pointer triangle
-                        Canvas(modifier = Modifier.size(width = 24.dp, height = 14.dp)) {
+                        Canvas(modifier = Modifier.size(width = 22.dp, height = 12.dp)) {
                             val triangle = Path().apply {
                                 moveTo(0f, 0f)
                                 lineTo(size.width, 0f)
                                 lineTo(size.width / 2f, size.height)
                                 close()
                             }
-                            drawPath(triangle, color = OceanBluePrimary)
+                            drawPath(triangle, color = palette.primary)
                         }
                     }
                 }
 
-                // Floating My-Location Paper Plane Button on bottom-right of map
+                // Floating Live GPS Button on bottom-right of map
                 Surface(
                     onClick = {
                         if (!locationPermissionGranted) {
@@ -399,81 +417,79 @@ fun FriendsMapScreen(
                                 )
                             )
                         } else {
-                            locationStatusBanner = "Centered on Thamel, Kathmandu • Explicit location sharing active."
+                            val gps = liveGpsState
+                            locationStatusBanner = if (gps != null) {
+                                "Live GPS locked: ${String.format(Locale.US, "%.5f, %.5f", gps.latitude, gps.longitude)} (${gps.addressLabel})"
+                            } else {
+                                "Waiting for hardware GPS fix from LocationManager..."
+                            }
                         }
                     },
                     shape = CircleShape,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 6.dp,
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .padding(16.dp)
-                        .size(46.dp)
+                        .padding(14.dp)
+                        .size(if (dimens.isCompact) 40.dp else 46.dp)
                         .testTag("map_my_location_fab")
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = Icons.Filled.NearMe,
-                            contentDescription = "Request Location",
-                            tint = OceanBluePrimary,
-                            modifier = Modifier.size(22.dp)
+                            contentDescription = "Request Live GPS Location",
+                            tint = palette.primary,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Bottom Compact Friend Detail Sheet Card matching Screen 3 mockup
             Surface(
-                shape = RoundedCornerShape(28.dp),
+                shape = RoundedCornerShape(dimens.cardRadius),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 8.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 86.dp)
+                    .padding(bottom = dimens.bottomBarClearance - 16.dp)
                     .testTag("friend_detail_card")
             ) {
                 if (selectedFriend == null) {
                     Column(
-                        modifier = Modifier.padding(20.dp),
+                        modifier = Modifier.padding(16.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "No Friends Added Yet",
+                            text = "No Friends in Network Yet",
                             fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp
+                            fontSize = 15.sp
                         )
-                        Spacer(modifier = Modifier.height(6.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "Add friends or load reference friends to view balances and opt-in map pins.",
+                            text = "Add friends to track real-time split balances and opt-in live GPS pins.",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Button(
-                                onClick = { showAddFriendDialog = true },
-                                colors = ButtonDefaults.buttonColors(containerColor = OceanBluePrimary),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("Add Friend")
-                            }
-                            OutlinedButton(
-                                onClick = onSeedStarterFriends,
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("Load Sample Friends")
-                            }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Button(
+                            onClick = { showAddFriendDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Add Real Friend")
                         }
                     }
                 } else {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 16.dp)
+                            .padding(horizontal = if (dimens.isCompact) 14.dp else 18.dp, vertical = if (dimens.isCompact) 11.dp else 14.dp)
                     ) {
-                        // Top Row: Avatar + Name + Verified + Age/Gender + Online Pill + Chevron
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -482,33 +498,38 @@ fun FriendsMapScreen(
                         ) {
                             UserAvatarCircle(
                                 name = selectedFriend.name,
-                                size = 62.dp,
+                                size = if (dimens.isCompact) 48.dp else 58.dp,
                                 avatarIndex = selectedFriend.avatarIndex.toInt(),
                                 wearSunglasses = true
                             )
-                            Spacer(modifier = Modifier.width(14.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(
                                         text = selectedFriend.name,
                                         color = MaterialTheme.colorScheme.onSurface,
-                                        fontSize = 18.sp,
-                                        fontWeight = FontWeight.ExtraBold
+                                        fontSize = if (dimens.isCompact) 16.sp else 18.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                     Spacer(modifier = Modifier.width(5.dp))
                                     Icon(
                                         imageVector = Icons.Filled.CheckCircle,
                                         contentDescription = "Verified",
                                         tint = Color(0xFF10B981),
-                                        modifier = Modifier.size(17.dp)
+                                        modifier = Modifier.size(16.dp)
                                     )
                                 }
                                 Text(
-                                    text = "Age: ${selectedFriend.age ?: 25} • ${selectedFriend.gender}",
+                                    text = "Age: ${selectedFriend.age ?: 25} • ${selectedFriend.gender}" +
+                                        (selectedFriend.address?.let { " • $it" } ?: ""),
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 13.sp
+                                    fontSize = 12.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
+                                Spacer(modifier = Modifier.height(3.dp))
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(50))
@@ -516,12 +537,15 @@ fun FriendsMapScreen(
                                             if (selectedFriend.locationSharing) Color(0xFFDDF6E8)
                                             else Color(0xFFE2E8F0)
                                         )
-                                        .padding(horizontal = 10.dp, vertical = 2.dp)
+                                        .padding(horizontal = 9.dp, vertical = 2.dp)
                                 ) {
+                                    val coordSuffix = if (selectedFriend.locationSharing && selectedFriend.latitude != null && selectedFriend.longitude != null) {
+                                        String.format(Locale.US, " (%.3f, %.3f)", selectedFriend.latitude, selectedFriend.longitude)
+                                    } else ""
                                     Text(
-                                        text = if (selectedFriend.locationSharing) "● Online" else "● Location Private",
+                                        text = if (selectedFriend.locationSharing) "● Live Pin$coordSuffix" else "● Location Private",
                                         color = if (selectedFriend.locationSharing) Color(0xFF15803D) else Color(0xFF475569),
-                                        fontSize = 11.sp,
+                                        fontSize = 10.sp,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                 }
@@ -533,11 +557,11 @@ fun FriendsMapScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        // 3-Column Balances Row: Owes you | You owe | Splits
+                        // 3-Column Real-Time Balances Row: Owes you | You owe | Splits
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceEvenly,
@@ -550,17 +574,17 @@ fun FriendsMapScreen(
                                         selectedFriend.currency.ifBlank { displayCurrency }
                                     ),
                                     color = MaterialTheme.colorScheme.onSurface,
-                                    fontSize = 18.sp,
+                                    fontSize = if (dimens.isCompact) 15.sp else 17.sp,
                                     fontWeight = FontWeight.ExtraBold
                                 )
                                 Text(
                                     text = "Owes you",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 12.sp
+                                    fontSize = 11.sp
                                 )
                             }
                             VerticalDivider(
-                                modifier = Modifier.height(32.dp),
+                                modifier = Modifier.height(28.dp),
                                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
                             )
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -570,87 +594,86 @@ fun FriendsMapScreen(
                                         selectedFriend.currency.ifBlank { displayCurrency }
                                     ),
                                     color = MaterialTheme.colorScheme.onSurface,
-                                    fontSize = 18.sp,
+                                    fontSize = if (dimens.isCompact) 15.sp else 17.sp,
                                     fontWeight = FontWeight.ExtraBold
                                 )
                                 Text(
                                     text = "You owe",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 12.sp
+                                    fontSize = 11.sp
                                 )
                             }
                             VerticalDivider(
-                                modifier = Modifier.height(32.dp),
+                                modifier = Modifier.height(28.dp),
                                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
                             )
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
                                     text = "${selectedFriend.splitsCount}",
                                     color = MaterialTheme.colorScheme.onSurface,
-                                    fontSize = 18.sp,
+                                    fontSize = if (dimens.isCompact) 15.sp else 17.sp,
                                     fontWeight = FontWeight.ExtraBold
                                 )
                                 Text(
                                     text = "Splits",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 12.sp
+                                    fontSize = 11.sp
                                 )
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
-                        // Primary Ocean-Blue Button: View Profile
                         Button(
                             onClick = { showProfileSheet = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = OceanBluePrimary),
+                            colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
                             shape = RoundedCornerShape(24.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(48.dp)
+                                .height(if (dimens.isCompact) 40.dp else 46.dp)
                                 .testTag("view_profile_button")
                         ) {
                             Text(
                                 text = "View Profile",
                                 color = Color.White,
-                                fontSize = 15.sp,
+                                fontSize = 14.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Overlapping Friend Avatars Row at bottom of card matching Screen 3 mockup
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.Center,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            allFriends.take(3).forEachIndexed { idx, friend ->
-                                UserAvatarCircle(
-                                    name = friend.name,
-                                    size = 36.dp,
-                                    avatarIndex = idx + 1,
-                                    modifier = Modifier
-                                        .offset(x = ((-6) * idx).dp)
-                                        .clickable { selectedFriendId = friend.id }
-                                )
-                            }
-                            if (allFriends.size > 3) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFFE8F0FE))
-                                        .border(2.dp, Color.White, CircleShape),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "+${allFriends.size - 3}",
-                                        color = OceanBlueDarkText,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
+                        if (allFriends.size > 1) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                allFriends.take(4).forEachIndexed { idx, friend ->
+                                    UserAvatarCircle(
+                                        name = friend.name,
+                                        size = dimens.avatarSizeSmall,
+                                        avatarIndex = idx + 1,
+                                        modifier = Modifier
+                                            .offset(x = ((-5) * idx).dp)
+                                            .clickable { selectedFriendId = friend.id }
                                     )
+                                }
+                                if (allFriends.size > 4) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(dimens.avatarSizeSmall)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primaryContainer)
+                                            .border(2.dp, Color.White, CircleShape),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "+${allFriends.size - 4}",
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -658,7 +681,6 @@ fun FriendsMapScreen(
                 }
             }
         } else {
-            // Searchable List View (Works even when Location Permission is denied!)
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
@@ -676,11 +698,11 @@ fun FriendsMapScreen(
                     .testTag("friends_search_input")
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 110.dp),
+                contentPadding = PaddingValues(bottom = dimens.bottomBarClearance),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(filteredFriends, key = { it.id }) { friend ->
@@ -702,7 +724,7 @@ fun FriendsMapScreen(
                         ) {
                             UserAvatarCircle(
                                 name = friend.name,
-                                size = 48.dp,
+                                size = dimens.avatarSizeMedium,
                                 avatarIndex = friend.avatarIndex.toInt(),
                                 showOnlineDot = friend.isOnline
                             )
@@ -711,10 +733,10 @@ fun FriendsMapScreen(
                                 Text(
                                     text = friend.name,
                                     fontWeight = FontWeight.Bold,
-                                    fontSize = 16.sp
+                                    fontSize = 15.sp
                                 )
                                 Text(
-                                    text = "Age: ${friend.age ?: 25} • ${friend.gender} • ${if (friend.locationSharing) (friend.address ?: "Sharing location") else "Location private"}",
+                                    text = "Age: ${friend.age ?: 25} • ${friend.gender} • ${if (friend.locationSharing) (friend.address ?: "Live pin active") else "Location private"}",
                                     fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -722,14 +744,14 @@ fun FriendsMapScreen(
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(
                                     text = "Owes: ${CurrencyCatalog.formatMinor(friend.owesYouMinor, friend.currency)}",
-                                    fontSize = 13.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = Color(0xFF15803D)
                                 )
                                 Text(
-                                    text = "You owe: ${CurrencyCatalog.formatMinor(friend.youOweMinor, friend.currency)}",
-                                    fontSize = 12.sp,
-                                    color = Color(0xFFC81E1E)
+                                    text = "Splits: ${friend.splitsCount}",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -739,7 +761,6 @@ fun FriendsMapScreen(
         }
     }
 
-    // Full Friend Detail & Privacy Consent Sheet
     if (showProfileSheet && selectedFriend != null) {
         ModalBottomSheet(
             onDismissRequest = { showProfileSheet = false }
@@ -770,7 +791,7 @@ fun FriendsMapScreen(
                                 Icon(
                                     imageVector = Icons.Filled.LocationOn,
                                     contentDescription = null,
-                                    tint = OceanBluePrimary,
+                                    tint = palette.primary,
                                     modifier = Modifier.size(14.dp)
                                 )
                                 Spacer(modifier = Modifier.width(4.dp))
@@ -792,9 +813,9 @@ fun FriendsMapScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Explicit Location Pin Sharing", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        Text("Explicit Live GPS Pin Sharing", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                         Text(
-                            "Location is private by default. Revoke anytime.",
+                            "Location is private by default. Syncs live coordinates when enabled.",
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -802,7 +823,14 @@ fun FriendsMapScreen(
                     Switch(
                         checked = selectedFriend.locationSharing,
                         onCheckedChange = { enabled ->
-                            onToggleFriendLocation(selectedFriend, enabled)
+                            val gps = liveGpsState
+                            onToggleFriendLocation(
+                                selectedFriend,
+                                enabled,
+                                gps?.latitude,
+                                gps?.longitude,
+                                gps?.addressLabel
+                            )
                         }
                     )
                 }
@@ -822,7 +850,7 @@ fun FriendsMapScreen(
                     }
                     Button(
                         onClick = { showProfileSheet = false },
-                        colors = ButtonDefaults.buttonColors(containerColor = OceanBluePrimary),
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
                         modifier = Modifier.weight(1f)
                     ) {
                         Text("Done")
@@ -833,18 +861,18 @@ fun FriendsMapScreen(
         }
     }
 
-    // Add Friend Dialog (Male / Female gender constraint & explicit location consent)
     if (showAddFriendDialog) {
+        val gps = liveGpsState
         var name by remember { mutableStateOf("") }
         var email by remember { mutableStateOf("") }
         var ageText by remember { mutableStateOf("25") }
         var gender by remember { mutableStateOf("Male") }
-        var address by remember { mutableStateOf("Thamel, Kathmandu") }
+        var address by remember(gps) { mutableStateOf(gps?.addressLabel ?: "") }
         var shareLocation by remember { mutableStateOf(false) }
 
         AlertDialog(
             onDismissRequest = { showAddFriendDialog = false },
-            title = { Text("Add Friend", fontWeight = FontWeight.Bold) },
+            title = { Text("Add Real-Time Friend", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
@@ -886,7 +914,8 @@ fun FriendsMapScreen(
                     OutlinedTextField(
                         value = address,
                         onValueChange = { address = it },
-                        label = { Text("Shared Place / Address (optional)") },
+                        label = { Text("Address / Live Venue") },
+                        placeholder = { Text(gps?.addressLabel ?: "Enter city or tap GPS on map") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -896,7 +925,7 @@ fun FriendsMapScreen(
                             onCheckedChange = { shareLocation = it }
                         )
                         Text(
-                            text = "Consent to share pin on Friends Map (private by default)",
+                            text = "Consent to share live GPS pin on Friends Map",
                             fontSize = 12.sp
                         )
                     }
@@ -911,14 +940,17 @@ fun FriendsMapScreen(
                                 email.trim().ifEmpty { null },
                                 ageText.toIntOrNull(),
                                 gender,
-                                address.trim().ifEmpty { null },
+                                address.trim().ifEmpty { gps?.addressLabel },
                                 shareLocation,
+                                if (shareLocation) gps?.latitude else null,
+                                if (shareLocation) gps?.longitude else null,
                                 displayCurrency,
                                 allFriends.size % 5
                             )
                             showAddFriendDialog = false
                         }
-                    }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary)
                 ) {
                     Text("Save Friend")
                 }

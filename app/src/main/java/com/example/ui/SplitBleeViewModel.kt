@@ -8,6 +8,7 @@ import com.example.model.CurrencyCatalog
 import com.example.model.ExpenseGroup
 import com.example.model.ExpenseItem
 import com.example.model.FriendProfile
+import com.example.model.ParticipantShareCodec
 import com.example.model.PaymentEntry
 import com.example.model.UserProfile
 import com.google.firebase.firestore.FirebaseFirestoreException
@@ -17,6 +18,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -40,6 +42,19 @@ class SplitBleeViewModel(
 
     private val _isBusy = MutableStateFlow(false)
     val isBusy: StateFlow<Boolean> = _isBusy.asStateFlow()
+
+    // Instant real-time local state overrides so Theme, Compact Mode, Language, and Currency switch in 0ms
+    private val _localThemeOverride = MutableStateFlow<String?>(null)
+    val localThemeOverride: StateFlow<String?> = _localThemeOverride.asStateFlow()
+
+    private val _localThemeModeOverride = MutableStateFlow<String?>(null)
+    val localThemeModeOverride: StateFlow<String?> = _localThemeModeOverride.asStateFlow()
+
+    private val _localUiScaleOverride = MutableStateFlow<String?>(null)
+    val localUiScaleOverride: StateFlow<String?> = _localUiScaleOverride.asStateFlow()
+
+    private val _localPhotoUriOverride = MutableStateFlow<String?>(null)
+    val localPhotoUriOverride: StateFlow<String?> = _localPhotoUriOverride.asStateFlow()
 
     val userProfileState: StateFlow<UiState<UserProfile?>> = repository.observeUserProfile(currentUserId)
         .map<UserProfile?, UiState<UserProfile?>> { UiState.Success(it) }
@@ -75,8 +90,48 @@ class SplitBleeViewModel(
             initialValue = UiState.Loading
         )
 
-    val friendsState: StateFlow<UiState<List<FriendProfile>>> = repository.observeFriends(currentUserId)
-        .map<List<FriendProfile>, UiState<List<FriendProfile>>> { UiState.Success(it) }
+    // Real-time Friends stream combined with live Expenses so every friend's balance & splits count updates in real time!
+    val friendsState: StateFlow<UiState<List<FriendProfile>>> = combine(
+        repository.observeFriends(currentUserId),
+        repository.observeExpenses(currentUserId)
+    ) { friends, expenses ->
+        val activeExpenses = expenses.filter { it.status != "CANCELLED" }
+        val enrichedFriends = friends.map { friend ->
+            var liveOwesYou = 0L
+            var liveSplitsCount = 0L
+            activeExpenses.forEach { exp ->
+                val shares = ParticipantShareCodec.decode(
+                    exp.participantSharesSummary,
+                    exp.participantNames,
+                    exp.totalMinor,
+                    exp.status
+                )
+                val matchingShare = shares.firstOrNull { s ->
+                    s.name.equals(friend.name, ignoreCase = true) ||
+                        s.name.substringBefore(" ").equals(friend.name.substringBefore(" "), ignoreCase = true)
+                }
+                if (matchingShare != null) {
+                    liveSplitsCount += 1L
+                    val convertedRem = CurrencyCatalog.convertMinorEstimate(
+                        matchingShare.remainingMinor,
+                        exp.currency,
+                        friend.currency
+                    )
+                    liveOwesYou += convertedRem
+                }
+            }
+            if (liveSplitsCount > 0L && (friend.owesYouMinor != liveOwesYou || friend.splitsCount != liveSplitsCount)) {
+                viewModelScope.launch {
+                    repository.updateFriendBalances(friend, liveOwesYou, friend.youOweMinor, liveSplitsCount)
+                }
+            }
+            friend.copy(
+                owesYouMinor = if (liveSplitsCount > 0L) liveOwesYou else friend.owesYouMinor,
+                splitsCount = if (liveSplitsCount > 0L) liveSplitsCount else friend.splitsCount
+            )
+        }
+        UiState.Success(enrichedFriends) as UiState<List<FriendProfile>>
+    }
         .catch { error ->
             val firestoreError = generateSequence(error) { it.cause }
                 .filterIsInstance<FirebaseFirestoreException>()
@@ -140,6 +195,10 @@ class SplitBleeViewModel(
         _statusBanner.value = null
     }
 
+    fun showMessage(msg: String) {
+        _statusBanner.value = msg
+    }
+
     fun createSplit(
         title: String,
         category: String,
@@ -157,6 +216,7 @@ class SplitBleeViewModel(
         splitMethod: String,
         participantNames: List<String>,
         customSharesMinor: List<Long>? = null,
+        receiptUri: String? = null,
         onCreated: (String) -> Unit = {}
     ) {
         viewModelScope.launch {
@@ -183,11 +243,12 @@ class SplitBleeViewModel(
                 discountMinor = discountMinor,
                 splitMethod = splitMethod,
                 participantNames = participantNames,
-                customSharesMinor = customSharesMinor
+                customSharesMinor = customSharesMinor,
+                receiptUri = receiptUri
             )
             _isBusy.value = false
             res.onSuccess { id ->
-                _statusBanner.value = "Split '${title.ifBlank { "Shared Expense" }}' saved in real time."
+                _statusBanner.value = "Split '${title.ifBlank { "Shared Expense" }}' synced live to Cloud Firestore."
                 onCreated(id)
             }.onFailure { err ->
                 _statusBanner.value = err.localizedMessage ?: "Failed to create split"
@@ -199,14 +260,15 @@ class SplitBleeViewModel(
         expense: ExpenseItem,
         newTitle: String,
         newPlace: String,
-        newNotes: String?
+        newNotes: String?,
+        newReceiptUri: String? = expense.receiptUri
     ) {
         viewModelScope.launch {
             _isBusy.value = true
-            val res = repository.updateExpenseTitleAndNote(expense, newTitle, newPlace, newNotes)
+            val res = repository.updateExpenseTitleAndNote(expense, newTitle, newPlace, newNotes, newReceiptUri)
             _isBusy.value = false
             res.onSuccess {
-                _statusBanner.value = "Split details updated."
+                _statusBanner.value = "Split details updated in real time."
             }.onFailure { err ->
                 _statusBanner.value = err.localizedMessage ?: "Failed to update split"
             }
@@ -238,7 +300,7 @@ class SplitBleeViewModel(
                 _statusBanner.value = if (entryType == "REVERSAL") {
                     "Ledger reversal recorded; split marked as Unpaid."
                 } else {
-                    "Payment recorded in immutable ledger."
+                    "Payment recorded in real-time immutable ledger."
                 }
             }.onFailure { err ->
                 _statusBanner.value = err.localizedMessage ?: "Failed to record payment"
@@ -253,13 +315,13 @@ class SplitBleeViewModel(
         gender: String,
         address: String?,
         locationSharing: Boolean,
+        latitude: Double?,
+        longitude: Double?,
         currency: String,
         avatarIndex: Int
     ) {
         viewModelScope.launch {
             _isBusy.value = true
-            val lat = if (locationSharing) 27.714 + ((avatarIndex % 5) * 0.004) else null
-            val lng = if (locationSharing) 85.312 + ((avatarIndex % 5) * 0.004) else null
             val res = repository.addFriend(
                 name = name,
                 email = email,
@@ -267,26 +329,32 @@ class SplitBleeViewModel(
                 gender = gender,
                 address = address,
                 locationSharing = locationSharing,
-                latitude = lat,
-                longitude = lng,
+                latitude = latitude,
+                longitude = longitude,
                 currency = currency,
                 avatarIndex = avatarIndex
             )
             _isBusy.value = false
             res.onSuccess {
-                _statusBanner.value = "Friend '$name' added."
+                _statusBanner.value = "Friend '$name' added to real-time network."
             }.onFailure { err ->
                 _statusBanner.value = err.localizedMessage ?: "Failed to add friend"
             }
         }
     }
 
-    fun toggleFriendLocation(friend: FriendProfile, enabled: Boolean) {
+    fun toggleFriendLocation(
+        friend: FriendProfile,
+        enabled: Boolean,
+        liveLat: Double? = null,
+        liveLng: Double? = null,
+        liveAddress: String? = null
+    ) {
         viewModelScope.launch {
-            repository.toggleFriendLocationSharing(friend, enabled)
+            repository.toggleFriendLocationSharing(friend, enabled, liveLat, liveLng, liveAddress)
                 .onSuccess {
                     _statusBanner.value = if (enabled) {
-                        "Location sharing enabled for ${friend.name}."
+                        "Live GPS pin sharing enabled for ${friend.name}."
                     } else {
                         "Location sharing revoked for ${friend.name}."
                     }
@@ -324,11 +392,21 @@ class SplitBleeViewModel(
         address: String? = current?.address,
         preferredLanguage: String = current?.preferredLanguage ?: "en",
         defaultCurrency: String = current?.defaultCurrency ?: "USD",
-        theme: String = current?.theme ?: "Ocean Blue",
-        themeMode: String = current?.themeMode ?: "Light",
+        theme: String = current?.theme ?: _localThemeOverride.value ?: "Ocean Blue",
+        themeMode: String = current?.themeMode ?: _localThemeModeOverride.value ?: "Light",
+        uiScaleMode: String = current?.uiScaleMode ?: _localUiScaleOverride.value ?: "Auto",
+        photoUrl: String? = current?.photoUrl ?: _localPhotoUriOverride.value ?: initialPhotoUrl,
         notificationsEnabled: Boolean = current?.notificationsEnabled ?: true,
         locationSharingEnabled: Boolean = current?.locationSharingEnabled ?: false
     ) {
+        // Apply immediately in memory for 0ms real-time theme & compact mode switching
+        _localThemeOverride.value = theme
+        _localThemeModeOverride.value = themeMode
+        _localUiScaleOverride.value = uiScaleMode
+        if (!photoUrl.isNullOrBlank()) {
+            _localPhotoUriOverride.value = photoUrl
+        }
+
         viewModelScope.launch {
             repository.updateUserProfile(
                 displayName = displayName,
@@ -339,9 +417,13 @@ class SplitBleeViewModel(
                 defaultCurrency = defaultCurrency,
                 theme = theme,
                 themeMode = themeMode,
+                uiScaleMode = uiScaleMode,
+                photoUrl = photoUrl,
                 notificationsEnabled = notificationsEnabled,
                 locationSharingEnabled = locationSharingEnabled
-            ).onFailure { err ->
+            ).onSuccess {
+                _statusBanner.value = "Applied $theme ($themeMode • $uiScaleMode scale) in real time."
+            }.onFailure { err ->
                 _statusBanner.value = err.localizedMessage ?: "Failed to save settings"
             }
         }

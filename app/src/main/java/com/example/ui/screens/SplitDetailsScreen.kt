@@ -1,6 +1,10 @@
 package com.example.ui.screens
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,8 +26,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.IosShare
@@ -38,6 +44,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -63,24 +70,62 @@ import com.example.model.ParticipantShareCodec
 import com.example.ui.components.ExpenseHeaderIllustration
 import com.example.ui.components.StatusPillBadge
 import com.example.ui.components.UserAvatarCircle
-import com.example.ui.theme.OceanBlueDarkText
-import com.example.ui.theme.OceanBlueDeepNavy
-import com.example.ui.theme.OceanBluePrimary
+import com.example.ui.theme.LocalActivePalette
+import com.example.ui.theme.LocalAppDimens
 import com.example.util.ExportHelper
+import java.util.Locale
 
 @Composable
 fun SplitDetailsScreen(
     expense: ExpenseItem,
     strings: LocalizedStrings,
     onBack: () -> Unit,
-    onUpdateExpenseInfo: (newTitle: String, newPlace: String, newNotes: String?) -> Unit,
-    onRecordPayment: (payerName: String, payeeName: String, amountMinor: Long, method: String, reference: String?, entryType: String) -> Unit
+    onUpdateExpenseInfo: (newTitle: String, newPlace: String, newNotes: String?, newReceiptUri: String?) -> Unit,
+    onRecordPayment: (payerName: String, payeeName: String, amountMinor: Long, method: String, reference: String?, entryType: String) -> Unit,
+    onNotifyStatus: (String) -> Unit = {}
 ) {
     BackHandler { onBack() }
 
     val context = LocalContext.current
+    val palette = LocalActivePalette.current
+    val dimens = LocalAppDimens.current
+
     var showEditDialog by remember { mutableStateOf(false) }
     var showRecordPaymentDialog by remember { mutableStateOf(false) }
+    var pendingExportBytes by remember { mutableStateOf<ByteArray?>(null) }
+
+    val receiptPhotoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+            }
+            onUpdateExpenseInfo(expense.title, expense.place, expense.notes, uri.toString())
+            onNotifyStatus("Receipt photo attached from gallery.")
+        }
+    }
+
+    val createDocumentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("*/*")
+    ) { uri ->
+        val bytes = pendingExportBytes
+        if (uri != null && bytes != null) {
+            ExportHelper.writeBytesToUri(context, uri, bytes)
+                .onSuccess {
+                    ExportHelper.sendRealTimeNotification(
+                        context,
+                        "SplitBlee High-Res Export Saved",
+                        "Saved '${expense.title}' (${bytes.size / 1024} KB) to device storage."
+                    )
+                    onNotifyStatus("High-resolution receipt saved (${bytes.size / 1024} KB).")
+                }
+        }
+    }
 
     val participantShares = remember(expense) {
         ParticipantShareCodec.decode(
@@ -94,9 +139,9 @@ fun SplitDetailsScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 10.dp, bottom = 36.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .padding(horizontal = dimens.horizontalPadding),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 36.dp),
+        verticalArrangement = Arrangement.spacedBy(dimens.itemSpacing)
     ) {
         // Top Navigation Bar matching Screen 4 mockup: `<` | `Split Details` | `...`
         item {
@@ -109,7 +154,7 @@ fun SplitDetailsScreen(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,
-                    modifier = Modifier.size(42.dp)
+                    modifier = Modifier.size(dimens.headerIconSize)
                 ) {
                     IconButton(
                         onClick = onBack,
@@ -126,7 +171,7 @@ fun SplitDetailsScreen(
                 Text(
                     text = strings.splitDetails,
                     color = MaterialTheme.colorScheme.onBackground,
-                    fontSize = 18.sp,
+                    fontSize = if (dimens.isCompact) 16.sp else 18.sp,
                     fontWeight = FontWeight.ExtraBold
                 )
 
@@ -134,7 +179,7 @@ fun SplitDetailsScreen(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,
-                    modifier = Modifier.size(42.dp)
+                    modifier = Modifier.size(dimens.headerIconSize)
                 ) {
                     IconButton(
                         onClick = { showRecordPaymentDialog = true },
@@ -153,24 +198,58 @@ fun SplitDetailsScreen(
         // Main Card containing Header Banner, Metadata, Avatars, Bill Summary, and Split Among
         item {
             Surface(
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(dimens.cardRadius),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 4.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
-                    // Artisan Pizza / Category Banner matching Screen 4 mockup
-                    ExpenseHeaderIllustration(
-                        title = expense.title,
-                        category = expense.category
-                    )
+                    Box {
+                        ExpenseHeaderIllustration(
+                            title = expense.title,
+                            category = expense.category,
+                            receiptUri = expense.receiptUri
+                        )
+                        // Gallery Photo Picker Button on Banner
+                        Surface(
+                            onClick = {
+                                receiptPhotoPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.Black.copy(alpha = 0.55f),
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(10.dp)
+                                .testTag("attach_receipt_photo_button")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.AddPhotoAlternate,
+                                    contentDescription = "Attach Gallery Receipt",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text(
+                                    text = if (expense.receiptUri.isNullOrBlank()) "Gallery Photo" else "Change Photo",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
 
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 18.dp, vertical = 16.dp)
+                            .padding(horizontal = if (dimens.isCompact) 14.dp else 18.dp, vertical = if (dimens.isCompact) 12.dp else 16.dp)
                     ) {
-                        // Title + Edit Icon
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -179,13 +258,13 @@ fun SplitDetailsScreen(
                             Text(
                                 text = expense.title,
                                 color = MaterialTheme.colorScheme.onSurface,
-                                fontSize = 21.sp,
+                                fontSize = if (dimens.isCompact) 18.sp else 21.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 modifier = Modifier.weight(1f)
                             )
                             Surface(
                                 shape = CircleShape,
-                                color = Color(0xFFEEF4FC),
+                                color = MaterialTheme.colorScheme.primaryContainer,
                                 modifier = Modifier.size(34.dp)
                             ) {
                                 IconButton(
@@ -195,53 +274,51 @@ fun SplitDetailsScreen(
                                     Icon(
                                         imageVector = Icons.Filled.Edit,
                                         contentDescription = "Edit Split",
-                                        tint = OceanBlueDarkText,
+                                        tint = palette.primary,
                                         modifier = Modifier.size(16.dp)
                                     )
                                 }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
 
-                        // Date & Time Row
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 imageVector = Icons.Filled.CalendarToday,
                                 contentDescription = "Date",
-                                tint = OceanBluePrimary,
+                                tint = palette.primary,
                                 modifier = Modifier.size(15.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = expense.expenseDate,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(5.dp))
+                        Spacer(modifier = Modifier.height(4.dp))
 
-                        // Location / Place Row
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 imageVector = Icons.Filled.LocationOn,
                                 contentDescription = "Place",
-                                tint = OceanBluePrimary,
+                                tint = palette.primary,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = expense.place,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 13.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium
                             )
                         }
 
                         if (!expense.notes.isNullOrBlank()) {
-                            Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(5.dp))
                             Text(
                                 text = "Note: ${expense.notes}",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -249,53 +326,51 @@ fun SplitDetailsScreen(
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(14.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
-                        // Participant Avatars Row with +N Badge matching Screen 4 mockup
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val names = expense.participantNames.ifEmpty { listOf("Rahul Shah", "Aarav", "Priya", "Sita") }
+                        // Participant Avatars Row
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val names = expense.participantNames.ifEmpty { listOf("You") }
                             names.take(4).forEachIndexed { idx, name ->
                                 UserAvatarCircle(
                                     name = name,
-                                    size = 42.dp,
+                                    size = dimens.avatarSizeSmall,
                                     avatarIndex = idx,
                                     wearSunglasses = idx == 1 || idx == 2,
                                     modifier = Modifier.offset(x = ((-4) * idx).dp)
                                 )
                             }
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFFEEF4FC))
-                                    .border(1.dp, Color(0xFFD5E3F7), CircleShape),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = if (names.size > 4) "+${names.size - 4}" else "+1",
-                                    color = OceanBlueDarkText,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                            if (names.size > 4) {
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(dimens.avatarSizeSmall)
+                                        .clip(CircleShape)
+                                        .background(MaterialTheme.colorScheme.primaryContainer)
+                                        .border(1.dp, palette.primary.copy(alpha = 0.3f), CircleShape),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "+${names.size - 4}",
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(18.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
 
-                        // Bill Summary Header
                         Text(
                             text = strings.billSummary,
                             color = MaterialTheme.colorScheme.onSurface,
-                            fontSize = 17.sp,
+                            fontSize = if (dimens.isCompact) 15.sp else 17.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        // Bill Summary Card matching Screen 4 mockup
                         Surface(
                             shape = RoundedCornerShape(16.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
@@ -303,7 +378,7 @@ fun SplitDetailsScreen(
                         ) {
                             Column(
                                 modifier = Modifier.padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                verticalArrangement = Arrangement.spacedBy(7.dp)
                             ) {
                                 BillSummaryRow(
                                     label = strings.totalBill,
@@ -351,7 +426,7 @@ fun SplitDetailsScreen(
                                     )
                                     Text(
                                         text = CurrencyCatalog.formatMinor(expense.totalMinor, expense.currency),
-                                        color = MaterialTheme.colorScheme.onSurface,
+                                        color = palette.primary,
                                         fontSize = 16.sp,
                                         fontWeight = FontWeight.ExtraBold
                                     )
@@ -359,9 +434,8 @@ fun SplitDetailsScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
 
-                        // Split Among Header matching Screen 4 mockup
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -370,38 +444,19 @@ fun SplitDetailsScreen(
                             Text(
                                 text = strings.splitAmong,
                                 color = MaterialTheme.colorScheme.onSurface,
-                                fontSize = 16.sp,
+                                fontSize = 15.sp,
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
                                 text = "${expense.participantCount} People • ${expense.splitMethod}",
-                                color = OceanBluePrimary,
-                                fontSize = 13.sp,
+                                color = palette.primary,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
 
-                        // Avatars row under Split Among
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            participantShares.take(4).forEachIndexed { idx, share ->
-                                UserAvatarCircle(
-                                    name = share.name,
-                                    size = 42.dp,
-                                    avatarIndex = idx,
-                                    wearSunglasses = idx == 1 || idx == 2
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        // Per-Participant Share Breakdown (Assigned, Paid, Remaining, Status)
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             participantShares.forEach { share ->
                                 Row(
@@ -436,8 +491,7 @@ fun SplitDetailsScreen(
             }
         }
 
-        // Action Buttons matching Screen 4 mockup:
-        // 1. Soft Red/Pink Button: "Mark as Unpaid" (or if Unpaid, "Mark as Paid" + "Record Payment")
+        // Action Buttons matching Screen 4 mockup + 4K / 8K Direct Save
         item {
             val isCurrentlyPaid = expense.status == "PAID"
             Button(
@@ -451,6 +505,11 @@ fun SplitDetailsScreen(
                             "Marked as unpaid",
                             "REVERSAL"
                         )
+                        ExportHelper.sendRealTimeNotification(
+                            context,
+                            "Split Reversal Recorded",
+                            "'${expense.title}' was marked as Unpaid in the ledger."
+                        )
                     } else {
                         showRecordPaymentDialog = true
                     }
@@ -462,7 +521,7 @@ fun SplitDetailsScreen(
                 shape = RoundedCornerShape(26.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(50.dp)
+                    .height(dimens.buttonHeight)
                     .testTag("mark_unpaid_or_record_button")
             ) {
                 Icon(
@@ -474,18 +533,64 @@ fun SplitDetailsScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = if (isCurrentlyPaid) strings.markAsUnpaid else "${strings.recordPayment} / ${strings.markAsPaid}",
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
         }
 
-        // 2. Deep Navy Button: "Share Details" matching Screen 4 mockup
+        // 4K & 8K High-Resolution Receipt Export Row
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        pendingExportBytes = ExportHelper.buildHighResPosterPngBytes(
+                            scopeLabel = expense.title,
+                            expenses = listOf(expense),
+                            payments = emptyList(),
+                            themeName = palette.name,
+                            resolution = "4K UHD"
+                        )
+                        createDocumentLauncher.launch("SplitBlee_${expense.title.replace(" ", "_")}_4K.png")
+                    },
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.weight(1f).testTag("export_4k_receipt_button")
+                ) {
+                    Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp), tint = palette.primary)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Save 4K PNG", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = palette.primary)
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        pendingExportBytes = ExportHelper.buildHighResPosterPngBytes(
+                            scopeLabel = expense.title,
+                            expenses = listOf(expense),
+                            payments = emptyList(),
+                            themeName = palette.name,
+                            resolution = "8K UHD"
+                        )
+                        createDocumentLauncher.launch("SplitBlee_${expense.title.replace(" ", "_")}_8K.png")
+                    },
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.weight(1f).testTag("export_8k_receipt_button")
+                ) {
+                    Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp), tint = palette.primary)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Save 8K PNG", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = palette.primary)
+                }
+            }
+        }
+
+        // Deep Theme Button: "Share Details" matching Screen 4 mockup
         item {
             Button(
                 onClick = {
                     val summaryText = buildString {
-                        appendLine("SplitBlee — ${expense.title}")
+                        appendLine("SplitBlee — ${expense.title} (${palette.name} Theme)")
                         appendLine("Date: ${expense.expenseDate}")
                         appendLine("Place: ${expense.place}")
                         appendLine("Total Bill: ${CurrencyCatalog.formatMinor(expense.subtotalMinor, expense.currency)}")
@@ -501,13 +606,13 @@ fun SplitDetailsScreen(
                     ExportHelper.shareTextContent(context, "Split Details: ${expense.title}", summaryText)
                 },
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = OceanBlueDeepNavy,
+                    containerColor = palette.deep,
                     contentColor = Color.White
                 ),
                 shape = RoundedCornerShape(26.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(52.dp)
+                    .height(dimens.buttonHeight)
                     .testTag("share_details_button")
             ) {
                 Icon(
@@ -519,14 +624,13 @@ fun SplitDetailsScreen(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = strings.shareDetails,
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
             }
         }
     }
 
-    // Edit Expense Dialog
     if (showEditDialog) {
         var titleInput by remember { mutableStateOf(expense.title) }
         var placeInput by remember { mutableStateOf(expense.place) }
@@ -562,9 +666,10 @@ fun SplitDetailsScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        onUpdateExpenseInfo(titleInput, placeInput, notesInput.ifBlank { null })
+                        onUpdateExpenseInfo(titleInput, placeInput, notesInput.ifBlank { null }, expense.receiptUri)
                         showEditDialog = false
-                    }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary)
                 ) {
                     Text("Save")
                 }
@@ -577,14 +682,13 @@ fun SplitDetailsScreen(
         )
     }
 
-    // Record Confirmed Payment Ledger Entry Dialog
     if (showRecordPaymentDialog) {
         val unpaidParticipants = participantShares.filter { it.status != "PAID" }.ifEmpty { participantShares }
         var selectedPayer by remember { mutableStateOf(unpaidParticipants.firstOrNull()?.name ?: "Participant") }
         val defaultAmtMinor = participantShares.firstOrNull { it.name == selectedPayer }?.remainingMinor?.takeIf { it > 0 }
             ?: (expense.totalMinor / expense.participantCount.coerceAtLeast(1L))
         var amountText by remember(selectedPayer) {
-            mutableStateOf(String.format( java.util.Locale.US, "%.2f", defaultAmtMinor / 100.0 ))
+            mutableStateOf(String.format(Locale.US, "%.2f", defaultAmtMinor / 100.0))
         }
         var method by remember { mutableStateOf("UPI") }
         var reference by remember { mutableStateOf("") }
@@ -654,8 +758,14 @@ fun SplitDetailsScreen(
                             reference.ifBlank { null },
                             "PAYMENT"
                         )
+                        ExportHelper.sendRealTimeNotification(
+                            context,
+                            "Ledger Payment Confirmed",
+                            "$selectedPayer paid ${CurrencyCatalog.formatMinor(minor, expense.currency)} via $method"
+                        )
                         showRecordPaymentDialog = false
-                    }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary)
                 ) {
                     Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
@@ -681,12 +791,12 @@ private fun BillSummaryRow(label: String, value: String) {
         Text(
             text = label,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontSize = 14.sp
+            fontSize = 13.sp
         )
         Text(
             text = value,
             color = MaterialTheme.colorScheme.onSurface,
-            fontSize = 14.sp,
+            fontSize = 13.sp,
             fontWeight = FontWeight.SemiBold
         )
     }

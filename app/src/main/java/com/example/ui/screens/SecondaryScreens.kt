@@ -1,7 +1,14 @@
 package com.example.ui.screens
 
+import android.Manifest
+import android.content.Intent
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,12 +31,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -49,6 +60,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -62,8 +76,9 @@ import com.example.model.SplitCalculator
 import com.example.ui.components.CategoryIconTile
 import com.example.ui.components.StatusPillBadge
 import com.example.ui.components.UserAvatarCircle
-import com.example.ui.theme.OceanBlueDarkText
-import com.example.ui.theme.OceanBluePrimary
+import com.example.ui.theme.LocalActivePalette
+import com.example.ui.theme.LocalAppDimens
+import com.example.util.RealTimeLocationAndMediaHelper
 
 @Composable
 fun NewSplitScreen(
@@ -88,32 +103,82 @@ fun NewSplitScreen(
         discountInput: String,
         splitMethod: String,
         participantNames: List<String>,
-        customSharesMinor: List<Long>?
+        customSharesMinor: List<Long>?,
+        receiptUri: String?
     ) -> Unit
 ) {
     BackHandler { onBack() }
 
-    var title by remember { mutableStateOf("Pizza Hut Dinner") }
+    val context = LocalContext.current
+    val palette = LocalActivePalette.current
+    val dimens = LocalAppDimens.current
+
+    var title by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("Food & Drink") }
-    var place by remember { mutableStateOf("Pizza Hut, Thamel") }
+    var place by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
     var currency by remember { mutableStateOf(defaultCurrency) }
     var selectedGroup by remember { mutableStateOf<ExpenseGroup?>(null) }
+    var receiptUri by remember { mutableStateOf<String?>(null) }
 
-    var subtotalInput by remember { mutableStateOf("72.50") }
+    var subtotalInput by remember { mutableStateOf("24.00") }
     var taxPercentInput by remember { mutableStateOf("13") }
     var serviceChargeInput by remember { mutableStateOf("0.00") }
     var tipInput by remember { mutableStateOf("0.00") }
     var extraInput by remember { mutableStateOf("0.00") }
-    var discountInput by remember { mutableStateOf("5.00") }
+    var discountInput by remember { mutableStateOf("0.00") }
+
+    var locationPermissionGranted by remember {
+        mutableStateOf(RealTimeLocationAndMediaHelper.hasLocationPermission(context))
+    }
+    val liveLocation by RealTimeLocationAndMediaHelper.rememberLiveGpsLocation(context, locationPermissionGranted)
+
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val granted = result[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            result[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        locationPermissionGranted = granted
+    }
+
+    val receiptPhotoPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+            }
+            receiptUri = uri.toString()
+        }
+    }
+
+    val receiptDocPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) {
+            }
+            receiptUri = uri.toString()
+        }
+    }
+
+    val receiptBitmap = remember(receiptUri) {
+        RealTimeLocationAndMediaHelper.loadImageBitmapFromUri(context, receiptUri)
+    }
 
     var splitMethod by remember { mutableStateOf("EQUAL") } // EQUAL, PERCENTAGE, EXACT, ITEMIZED
     val defaultParticipants = remember(userName, friends) {
-        val base = mutableListOf(userName.ifBlank { "Rahul Shah" })
-        friends.map { it.name }.forEach { if (it !in base && base.size < 4) base.add(it) }
-        if (base.size == 1) {
-            base.addAll(listOf("Aarav", "Priya", "Sita"))
-        }
+        val base = mutableListOf(userName.ifBlank { "Me" })
+        friends.map { it.name }.forEach { if (it !in base && base.size < 6) base.add(it) }
         base.joinToString(", ")
     }
     var participantsInput by remember(selectedGroup, defaultParticipants) {
@@ -123,11 +188,11 @@ fun NewSplitScreen(
         )
     }
 
-    val participantNames = remember(participantsInput) {
+    val participantNames = remember(participantsInput, userName) {
         participantsInput.split(",")
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .ifEmpty { listOf("Rahul Shah", "Aarav") }
+            .ifEmpty { listOf(userName.ifBlank { "Me" }) }
             .take(20)
     }
 
@@ -162,9 +227,9 @@ fun NewSplitScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 48.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .padding(horizontal = dimens.horizontalPadding),
+        contentPadding = PaddingValues(top = dimens.verticalSpacing, bottom = 52.dp),
+        verticalArrangement = Arrangement.spacedBy(dimens.verticalSpacing)
     ) {
         item {
             Row(
@@ -176,7 +241,7 @@ fun NewSplitScreen(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,
-                    modifier = Modifier.size(42.dp)
+                    modifier = Modifier.size(dimens.topBarIconSize)
                 ) {
                     IconButton(
                         onClick = onBack,
@@ -190,57 +255,206 @@ fun NewSplitScreen(
                     }
                 }
                 Text(
-                    text = "Create New Split",
-                    fontSize = 18.sp,
+                    text = "Create Real-Time Split",
+                    fontSize = (18f * dimens.fontScale).sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
-                Spacer(modifier = Modifier.width(42.dp))
+                Spacer(modifier = Modifier.width(dimens.topBarIconSize))
             }
         }
 
-        // Step 1: Title, Category, Place, Currency
+        // Step 1: Title, Category, Live GPS Venue, Receipt Photo, Currency
         item {
             Surface(
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 2.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(dimens.cardPadding),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("1. Expense Details", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                    Text(
+                        text = "1. Expense Details & Receipt",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = (15f * dimens.fontScale).sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                     OutlinedTextField(
                         value = title,
                         onValueChange = { title = it },
-                        label = { Text("Expense Title") },
+                        label = { Text("Expense Title (e.g., Dinner, Groceries)") },
+                        placeholder = { Text("Enter split title") },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth().testTag("new_split_title_input")
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("new_split_title_input")
                     )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(listOf("Food & Drink", "Shopping", "Coffee", "Travel", "Household", "Events")) { cat ->
                             FilterChip(
                                 selected = category == cat,
                                 onClick = { category = cat },
-                                label = { Text(cat, fontSize = 12.sp) }
+                                label = { Text(cat, fontSize = (12f * dimens.fontScale).sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = palette.accentChipBg,
+                                    selectedLabelColor = palette.deepNavy
+                                )
                             )
                         }
                     }
-                    OutlinedTextField(
-                        value = place,
-                        onValueChange = { place = it },
-                        label = { Text("Place / Venue") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = place,
+                            onValueChange = { place = it },
+                            label = { Text("Place / Venue") },
+                            placeholder = {
+                                Text(
+                                    liveLocation?.addressLabel ?: "Restaurant, store, or city"
+                                )
+                            },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Surface(
+                            onClick = {
+                                if (!locationPermissionGranted) {
+                                    locationPermissionLauncher.launch(
+                                        arrayOf(
+                                            Manifest.permission.ACCESS_FINE_LOCATION,
+                                            Manifest.permission.ACCESS_COARSE_LOCATION
+                                        )
+                                    )
+                                } else {
+                                    liveLocation?.let { place = it.addressLabel }
+                                }
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            color = palette.accentChipBg,
+                            modifier = Modifier
+                                .height(54.dp)
+                                .testTag("use_live_gps_place_button")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.MyLocation,
+                                    contentDescription = "Use Live GPS",
+                                    tint = palette.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = "GPS",
+                                    fontSize = (11f * dimens.fontScale).sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = palette.deepNavy
+                                )
+                            }
+                        }
+                    }
+
+                    // Gallery Receipt Photo & File Attachment Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                receiptPhotoPicker.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("new_split_gallery_receipt_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.PhotoLibrary,
+                                contentDescription = null,
+                                tint = palette.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = if (receiptBitmap != null) "Change Photo" else "Gallery Receipt",
+                                fontSize = (11.5f * dimens.fontScale).sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                receiptDocPicker.launch(arrayOf("image/*", "application/pdf"))
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("new_split_file_receipt_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.FolderOpen,
+                                contentDescription = null,
+                                tint = palette.primary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Attach File",
+                                fontSize = (11.5f * dimens.fontScale).sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    if (receiptBitmap != null) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(110.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .border(1.dp, palette.primary.copy(alpha = 0.4f), RoundedCornerShape(14.dp))
+                        ) {
+                            Image(
+                                bitmap = receiptBitmap,
+                                contentDescription = "Attached Receipt Preview",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(bottomStart = 10.dp),
+                                color = palette.deepNavy.copy(alpha = 0.8f),
+                                modifier = Modifier.align(Alignment.TopEnd)
+                            ) {
+                                Text(
+                                    text = "Receipt Attached ✓",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(listOf("USD", "NPR", "INR", "PKR", "EUR", "GBP", "AED", "AUD", "JPY", "KWD")) { code ->
                             FilterChip(
                                 selected = currency == code,
                                 onClick = { currency = code },
-                                label = { Text(code, fontSize = 12.sp) }
+                                label = { Text(code, fontSize = (12f * dimens.fontScale).sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = palette.accentChipBg,
+                                    selectedLabelColor = palette.deepNavy
+                                )
                             )
                         }
                     }
@@ -251,23 +465,28 @@ fun NewSplitScreen(
         // Step 2: Group or Participants
         item {
             Surface(
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 2.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(dimens.cardPadding),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("2. Group & Participants (${participantNames.size} people)", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                    Text(
+                        text = "2. Group & Participants (${participantNames.size} people)",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = (15f * dimens.fontScale).sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                     if (groups.isNotEmpty()) {
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             item {
                                 FilterChip(
                                     selected = selectedGroup == null,
                                     onClick = { selectedGroup = null },
-                                    label = { Text("One-off Split", fontSize = 12.sp) }
+                                    label = { Text("One-off Split", fontSize = (12f * dimens.fontScale).sp) }
                                 )
                             }
                             items(groups, key = { it.id }) { grp ->
@@ -277,7 +496,36 @@ fun NewSplitScreen(
                                         selectedGroup = grp
                                         currency = grp.settlementCurrency
                                     },
-                                    label = { Text(grp.name, fontSize = 12.sp) }
+                                    label = { Text(grp.name, fontSize = (12f * dimens.fontScale).sp) }
+                                )
+                            }
+                        }
+                    }
+                    if (friends.isNotEmpty()) {
+                        Text(
+                            text = "Tap a friend to toggle in this split:",
+                            fontSize = (11.5f * dimens.fontScale).sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(friends, key = { it.id }) { friend ->
+                                val isIncluded = participantNames.any { it.equals(friend.name, ignoreCase = true) }
+                                FilterChip(
+                                    selected = isIncluded,
+                                    onClick = {
+                                        val currentList = participantNames.toMutableList()
+                                        if (isIncluded && currentList.size > 1) {
+                                            currentList.removeAll { it.equals(friend.name, ignoreCase = true) }
+                                        } else if (!isIncluded) {
+                                            currentList.add(friend.name)
+                                        }
+                                        participantsInput = currentList.joinToString(", ")
+                                    },
+                                    label = { Text(friend.name, fontSize = (11.5f * dimens.fontScale).sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = palette.accentChipBg,
+                                        selectedLabelColor = palette.deepNavy
+                                    )
                                 )
                             }
                         }
@@ -295,16 +543,21 @@ fun NewSplitScreen(
         // Step 3: Bill Breakdown (Subtotal, Tax %, Service Charge, Tip, Extra, Discount)
         item {
             Surface(
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 2.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(dimens.cardPadding),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("3. Bill Breakdown ($currency)", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                    Text(
+                        text = "3. Bill Breakdown ($currency)",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = (15f * dimens.fontScale).sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         OutlinedTextField(
                             value = subtotalInput,
@@ -360,27 +613,52 @@ fun NewSplitScreen(
         // Step 4: Split Method & Reconciled Share Preview
         item {
             Surface(
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 2.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(dimens.cardPadding),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("4. Split Method & Exact Share Preview", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("EQUAL", "PERCENTAGE", "EXACT", "ITEMIZED").forEach { method ->
+                    Text(
+                        text = "4. Split Method & Exact Share Preview",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = (15f * dimens.fontScale).sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(listOf("EQUAL", "PERCENTAGE", "EXACT", "ITEMIZED")) { method ->
                             FilterChip(
                                 selected = splitMethod == method,
                                 onClick = { splitMethod = method },
-                                label = { Text(method, fontSize = 11.sp) }
+                                label = { Text(method, fontSize = (11f * dimens.fontScale).sp) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = palette.accentChipBg,
+                                    selectedLabelColor = palette.deepNavy
+                                )
                             )
                         }
                     }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "Tax ($taxPct%):",
+                            fontSize = (12.5f * dimens.fontScale).sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = CurrencyCatalog.formatMinor(taxMinor, currency),
+                            fontSize = (12.5f * dimens.fontScale).sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -390,8 +668,8 @@ fun NewSplitScreen(
                         Text(
                             text = CurrencyCatalog.formatMinor(totalMinor, currency),
                             fontWeight = FontWeight.ExtraBold,
-                            color = OceanBluePrimary,
-                            fontSize = 17.sp
+                            color = palette.primary,
+                            fontSize = (17f * dimens.fontScale).sp
                         )
                     }
 
@@ -401,10 +679,10 @@ fun NewSplitScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(name, fontSize = 13.sp)
+                            Text(name, fontSize = (13f * dimens.fontScale).sp)
                             Text(
                                 text = CurrencyCatalog.formatMinor(shareMinor, currency),
-                                fontSize = 13.sp,
+                                fontSize = (13f * dimens.fontScale).sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
@@ -416,10 +694,14 @@ fun NewSplitScreen(
         item {
             Button(
                 onClick = {
+                    val effectiveTitle = title.trim().ifBlank { "$category Split" }
+                    val effectivePlace = place.trim().ifBlank {
+                        liveLocation?.addressLabel ?: "Shared Venue"
+                    }
                     onSaveSplit(
-                        title,
+                        effectiveTitle,
                         category,
-                        place,
+                        effectivePlace,
                         notes.ifBlank { null },
                         selectedGroup?.id,
                         selectedGroup?.name,
@@ -432,22 +714,24 @@ fun NewSplitScreen(
                         discountInput,
                         splitMethod,
                         participantNames,
-                        previewSharesMinor
+                        previewSharesMinor,
+                        receiptUri
                     )
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = OceanBluePrimary),
-                shape = RoundedCornerShape(26.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = palette.primary),
+                shape = RoundedCornerShape(dimens.buttonHeight / 2),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(54.dp)
+                    .height(dimens.buttonHeight)
                     .testTag("save_split_button")
             ) {
-                Icon(Icons.Filled.CheckCircle, contentDescription = null)
+                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color.White)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Save Split (${CurrencyCatalog.formatMinor(totalMinor, currency)})",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
+                    text = "Save Live Split (${CurrencyCatalog.formatMinor(totalMinor, currency)})",
+                    fontSize = (15.5f * dimens.fontScale).sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
                 )
             }
         }
@@ -465,14 +749,16 @@ fun GroupsScreen(
 ) {
     BackHandler { onBack() }
 
+    val palette = LocalActivePalette.current
+    val dimens = LocalAppDimens.current
     var showCreateGroupDialog by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 110.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .padding(horizontal = dimens.horizontalPadding),
+        contentPadding = PaddingValues(top = dimens.verticalSpacing, bottom = 110.dp),
+        verticalArrangement = Arrangement.spacedBy(dimens.verticalSpacing)
     ) {
         item {
             Row(
@@ -484,17 +770,21 @@ fun GroupsScreen(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,
-                    modifier = Modifier.size(42.dp)
+                    modifier = Modifier.size(dimens.topBarIconSize)
                 ) {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
-                Text("Groups", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                Text(
+                    text = "Groups",
+                    fontSize = (18f * dimens.fontScale).sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
                 Surface(
                     shape = CircleShape,
-                    color = OceanBluePrimary,
-                    modifier = Modifier.size(42.dp)
+                    color = palette.primary,
+                    modifier = Modifier.size(dimens.topBarIconSize)
                 ) {
                     IconButton(
                         onClick = { showCreateGroupDialog = true },
@@ -509,35 +799,39 @@ fun GroupsScreen(
         if (groups.isEmpty()) {
             item {
                 Surface(
-                    shape = RoundedCornerShape(20.dp),
+                    shape = RoundedCornerShape(dimens.cardCornerRadius),
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
-                        modifier = Modifier.padding(20.dp),
+                        modifier = Modifier.padding(dimens.cardPadding),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Group,
                             contentDescription = null,
-                            tint = OceanBluePrimary,
+                            tint = palette.primary,
                             modifier = Modifier.size(38.dp)
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("No Groups Created Yet", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                        Text(
+                            text = "No Groups Created Yet",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = (16f * dimens.fontScale).sp
+                        )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            "Create a group with a dedicated settlement currency for trips, roommates, or dinners.",
-                            fontSize = 13.sp,
+                            text = "Create a real-time group with a dedicated settlement currency for trips, roommates, or dinners.",
+                            fontSize = (12.5f * dimens.fontScale).sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(14.dp))
                         Button(
                             onClick = { showCreateGroupDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = OceanBluePrimary)
+                            colors = ButtonDefaults.buttonColors(containerColor = palette.primary)
                         ) {
-                            Text("Create First Group")
+                            Text("Create First Group", color = Color.White)
                         }
                     }
                 }
@@ -546,28 +840,32 @@ fun GroupsScreen(
             items(groups, key = { it.id }) { group ->
                 Surface(
                     onClick = onNewSplitClick,
-                    shape = RoundedCornerShape(18.dp),
+                    shape = RoundedCornerShape(dimens.cardCornerRadius),
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
+                    Column(modifier = Modifier.padding(dimens.cardPadding)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(group.name, fontSize = 17.sp, fontWeight = FontWeight.ExtraBold)
+                            Text(
+                                text = group.name,
+                                fontSize = (16.5f * dimens.fontScale).sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(50))
-                                    .background(Color(0xFFDCE8FC))
+                                    .background(palette.accentChipBg)
                                     .padding(horizontal = 10.dp, vertical = 4.dp)
                             ) {
                                 Text(
                                     text = "Settlement: ${group.settlementCurrency}",
-                                    color = OceanBlueDarkText,
-                                    fontSize = 11.sp,
+                                    color = palette.deepNavy,
+                                    fontSize = (11f * dimens.fontScale).sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -575,12 +873,12 @@ fun GroupsScreen(
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
                             text = "${group.memberCount} members: ${group.memberNames.joinToString(", ")}",
-                            fontSize = 13.sp,
+                            fontSize = (12.5f * dimens.fontScale).sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(modifier = Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            group.memberNames.take(4).forEachIndexed { idx, m ->
+                            group.memberNames.take(5).forEachIndexed { idx, m ->
                                 UserAvatarCircle(name = m, size = 32.dp, avatarIndex = idx)
                             }
                         }
@@ -591,19 +889,20 @@ fun GroupsScreen(
     }
 
     if (showCreateGroupDialog) {
-        var groupName by remember { mutableStateOf("Thamel Weekend Crew") }
+        var groupName by remember { mutableStateOf("") }
         var groupCurrency by remember { mutableStateOf(defaultCurrency) }
-        var membersText by remember { mutableStateOf("${userName.ifBlank { "Rahul Shah" }}, Aarav, Priya, Sita") }
+        var membersText by remember { mutableStateOf(userName.ifBlank { "Me" }) }
 
         AlertDialog(
             onDismissRequest = { showCreateGroupDialog = false },
-            title = { Text("Create Group", fontWeight = FontWeight.Bold) },
+            title = { Text("Create Real-Time Group", fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = groupName,
                         onValueChange = { groupName = it },
                         label = { Text("Group Name") },
+                        placeholder = { Text("e.g., Weekend Trip, Apartment") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -628,11 +927,12 @@ fun GroupsScreen(
                 Button(
                     onClick = {
                         val members = membersText.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-                        onCreateGroup(groupName, groupCurrency, members)
+                        onCreateGroup(groupName.ifBlank { "Shared Group" }, groupCurrency, members)
                         showCreateGroupDialog = false
-                    }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primary)
                 ) {
-                    Text("Create")
+                    Text("Create", color = Color.White)
                 }
             },
             dismissButton = {
@@ -653,6 +953,9 @@ fun HistoryAnalyticsScreen(
     onOpenExpenseDetail: (String) -> Unit
 ) {
     BackHandler { onBack() }
+
+    val palette = LocalActivePalette.current
+    val dimens = LocalAppDimens.current
 
     var statusFilter by remember { mutableStateOf("ALL") }
     val activeExpenses = expenses.filter { it.status != "CANCELLED" }
@@ -679,9 +982,9 @@ fun HistoryAnalyticsScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 110.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+            .padding(horizontal = dimens.horizontalPadding),
+        contentPadding = PaddingValues(top = dimens.verticalSpacing, bottom = 110.dp),
+        verticalArrangement = Arrangement.spacedBy(dimens.verticalSpacing)
     ) {
         item {
             Row(
@@ -693,47 +996,63 @@ fun HistoryAnalyticsScreen(
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,
-                    modifier = Modifier.size(42.dp)
+                    modifier = Modifier.size(dimens.topBarIconSize)
                 ) {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
-                Text("History & Monthly Analytics", fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
-                Spacer(modifier = Modifier.width(42.dp))
+                Text(
+                    text = "History & Monthly Analytics",
+                    fontSize = (18f * dimens.fontScale).sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Spacer(modifier = Modifier.width(dimens.topBarIconSize))
             }
         }
 
         // Monthly Overview & Settlement Progress Card
         item {
             Surface(
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 2.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(dimens.cardPadding),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("Monthly Settlement Progress", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                    Text(
+                        text = "Real-Time Settlement Progress",
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = (15.5f * dimens.fontScale).sp
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Column {
-                            Text("Total Expenses", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
-                                CurrencyCatalog.formatMinor(totalSpentMinor, defaultCurrency),
-                                fontSize = 18.sp,
+                                text = "Total Expenses",
+                                fontSize = (12f * dimens.fontScale).sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = CurrencyCatalog.formatMinor(totalSpentMinor, defaultCurrency),
+                                fontSize = (18f * dimens.fontScale).sp,
                                 fontWeight = FontWeight.ExtraBold
                             )
                         }
                         Column(horizontalAlignment = Alignment.End) {
-                            Text("Settled / Paid", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(
-                                CurrencyCatalog.formatMinor(totalPaidMinor, defaultCurrency),
-                                fontSize = 18.sp,
+                                text = "Settled / Paid",
+                                fontSize = (12f * dimens.fontScale).sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = CurrencyCatalog.formatMinor(totalPaidMinor, defaultCurrency),
+                                fontSize = (18f * dimens.fontScale).sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 color = Color(0xFF15803D)
                             )
@@ -741,8 +1060,8 @@ fun HistoryAnalyticsScreen(
                     }
                     LinearProgressIndicator(
                         progress = { settlementProgress },
-                        color = OceanBluePrimary,
-                        trackColor = Color(0xFFDCE8FC),
+                        color = palette.primary,
+                        trackColor = palette.accentChipBg,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(10.dp)
@@ -750,7 +1069,7 @@ fun HistoryAnalyticsScreen(
                     )
                     Text(
                         text = "${(settlementProgress * 100).toInt()}% settled across ${activeExpenses.size} active splits (${payments.size} immutable ledger entries)",
-                        fontSize = 12.sp,
+                        fontSize = (11.5f * dimens.fontScale).sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -764,7 +1083,11 @@ fun HistoryAnalyticsScreen(
                     FilterChip(
                         selected = statusFilter == key,
                         onClick = { statusFilter = key },
-                        label = { Text(label, fontSize = 12.sp) }
+                        label = { Text(label, fontSize = (12f * dimens.fontScale).sp) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = palette.accentChipBg,
+                            selectedLabelColor = palette.deepNavy
+                        )
                     )
                 }
             }
@@ -773,30 +1096,37 @@ fun HistoryAnalyticsScreen(
         items(filteredExpenses, key = { it.id }) { exp ->
             Surface(
                 onClick = { onOpenExpenseDetail(exp.id) },
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(dimens.cardCornerRadius),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 2.dp,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
-                    modifier = Modifier.padding(14.dp),
+                    modifier = Modifier.padding(dimens.cardPadding),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    CategoryIconTile(category = exp.category, title = exp.title)
+                    CategoryIconTile(
+                        category = exp.category,
+                        title = exp.title
+                    )
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(exp.title, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                         Text(
-                            "${exp.expenseDate} • ${exp.place}",
-                            fontSize = 12.sp,
+                            text = exp.title,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = (14.5f * dimens.fontScale).sp
+                        )
+                        Text(
+                            text = "${exp.expenseDate} • ${exp.place}",
+                            fontSize = (11.5f * dimens.fontScale).sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Column(horizontalAlignment = Alignment.End) {
                         Text(
-                            CurrencyCatalog.formatMinor(exp.totalMinor, exp.currency),
+                            text = CurrencyCatalog.formatMinor(exp.totalMinor, exp.currency),
                             fontWeight = FontWeight.ExtraBold,
-                            fontSize = 15.sp
+                            fontSize = (14.5f * dimens.fontScale).sp
                         )
                         StatusPillBadge(status = exp.status)
                     }
@@ -809,8 +1139,8 @@ fun HistoryAnalyticsScreen(
                 Text(
                     text = "Immutable Payment Ledger",
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 16.sp,
-                    modifier = Modifier.padding(top = 8.dp)
+                    fontSize = (15.5f * dimens.fontScale).sp,
+                    modifier = Modifier.padding(top = 6.dp)
                 )
             }
             items(payments.take(15), key = { it.id }) { payment ->
@@ -827,7 +1157,7 @@ fun HistoryAnalyticsScreen(
                         Icon(
                             imageVector = Icons.Filled.Payments,
                             contentDescription = null,
-                            tint = OceanBluePrimary,
+                            tint = palette.primary,
                             modifier = Modifier.size(22.dp)
                         )
                         Spacer(modifier = Modifier.width(10.dp))
@@ -835,18 +1165,18 @@ fun HistoryAnalyticsScreen(
                             Text(
                                 text = "${payment.payerName} → ${payment.payeeName} (${payment.expenseTitle})",
                                 fontWeight = FontWeight.SemiBold,
-                                fontSize = 13.sp
+                                fontSize = (12.5f * dimens.fontScale).sp
                             )
                             Text(
                                 text = "[${payment.entryType}] via ${payment.method}",
-                                fontSize = 11.sp,
+                                fontSize = (11f * dimens.fontScale).sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Text(
                             text = CurrencyCatalog.formatMinor(payment.amountMinor, payment.currency),
                             fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
+                            fontSize = (13.5f * dimens.fontScale).sp,
                             color = if (payment.entryType == "REVERSAL") Color(0xFFC81E1E) else Color(0xFF15803D)
                         )
                     }
